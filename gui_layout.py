@@ -34,7 +34,21 @@ from typing import Callable, Dict, List, Optional, Tuple
 import customtkinter
 
 from constants import COLORS, SMALL_FONT, TOPBAR_FONT, UI_FONT, pick_monospace_font
-from ui_components import AIPanel, CodeEditor, ConsolePanel, Sidebar, StatusBar, TabButton, WelcomeScreen
+from ui_components import (
+    AIPanel,
+    ActivityBar,
+    BreadcrumbBar,
+    CodeEditor,
+    ConsolePanel,
+    ExtensionsPanel,
+    RunDebugPanel,
+    SearchPanel,
+    Sidebar,
+    SourceControlPanel,
+    StatusBar,
+    TabButton,
+    WelcomeScreen,
+)
 from editor_core import EditorTab, EditorWorkspace
 from execution_engine import ExecutionEngine, ExecutionResult
 import file_io
@@ -157,11 +171,38 @@ class NexCoreApp(customtkinter.CTk):
         body.grid_columnconfigure(3, weight=0)   # 1px divider (fixed width).
         body.grid_columnconfigure(4, weight=25)  # AI Assistant panel.
 
+        # The Activity Bar and its four mutually-exclusive views share the
+        # existing 20% left column, so the overall 20/55/25 proportions do
+        # not change when a different view is selected.
+        self.left_sidebar_area = tk.Frame(body, bg=COLORS["sidebar_bg"], width=1, height=1)
+        self.left_sidebar_area.grid(row=0, column=0, sticky="nsew")
+        self.left_sidebar_area.grid_propagate(False)
+        self.left_sidebar_area.grid_rowconfigure(0, weight=1)
+        self.left_sidebar_area.grid_columnconfigure(0, weight=0, minsize=48)
+        self.left_sidebar_area.grid_columnconfigure(1, weight=1)
+
         self.sidebar = Sidebar(
-            body, on_open_folder=self._choose_workspace_folder, on_file_selected=self._open_path,
+            self.left_sidebar_area, on_open_folder=self._choose_workspace_folder, on_file_selected=self._open_path,
             on_open_file=self._open_file_dialog,
         )
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.search_panel = SearchPanel(self.left_sidebar_area)
+        self.source_control_panel = SourceControlPanel(self.left_sidebar_area)
+        self.run_debug_panel = RunDebugPanel(self.left_sidebar_area)
+        self.extensions_panel = ExtensionsPanel(self.left_sidebar_area)
+        self._activity_panels = {
+            "explorer": self.sidebar,
+            "search": self.search_panel,
+            "source_control": self.source_control_panel,
+            "run_debug": self.run_debug_panel,
+            "extensions": self.extensions_panel,
+        }
+        for panel in self._activity_panels.values():
+            panel.grid(row=0, column=1, sticky="nsew")
+            panel.grid_remove()
+        self.sidebar.grid()
+
+        self.activity_bar = ActivityBar(self.left_sidebar_area, on_select=self._show_activity_panel)
+        self.activity_bar.grid(row=0, column=0, sticky="nsew")
 
         self.sidebar_divider = tk.Frame(body, bg=COLORS["border"], width=1)
         self.sidebar_divider.grid(row=0, column=1, sticky="ns")
@@ -182,6 +223,14 @@ class NexCoreApp(customtkinter.CTk):
         self.ai_panel = AIPanel(body, self.editor_font_family, get_context=self._get_ai_context)
         self.ai_panel.grid(row=0, column=4, sticky="nsew")
 
+    def _show_activity_panel(self, panel_name: str) -> None:
+        """Switch the one visible view beside the Activity Bar."""
+        for name, panel in self._activity_panels.items():
+            if name == panel_name:
+                panel.grid()
+            else:
+                panel.grid_remove()
+
     def _build_main_area(self, main_area: tk.Frame) -> None:
         """The center column's own internal top-to-bottom layout: tab
         strip, editor stack, and the collapsible output console. This
@@ -193,7 +242,11 @@ class NexCoreApp(customtkinter.CTk):
         self.tab_bar.pack(side="top", fill="x")
         self._divider(main_area, "x")
 
-        self._divider(main_area, "x", side="bottom")
+        self.breadcrumb = BreadcrumbBar(main_area)
+        self.breadcrumb.pack(side="top", fill="x")
+        self.breadcrumb.hide()
+
+        self.console_divider = self._divider(main_area, "x", side="bottom")
         self.console = ConsolePanel(main_area, font=(self.editor_font_family, 13))
         self.console.pack(side="bottom", fill="x")
 
@@ -256,7 +309,7 @@ class NexCoreApp(customtkinter.CTk):
         # Problems/Output panels don't exist in this harness yet.
         view_menu = make_menu()
         view_menu.add_command(label="Explorer", command=self._view_toggle_explorer, accelerator="Ctrl+Shift+E")
-        view_menu.add_command(label="Terminal", command=lambda: self.console.toggle(), accelerator="Ctrl+`")
+        view_menu.add_command(label="Terminal", command=self._terminal_focus_output, accelerator="Ctrl+`")
         view_menu.add_command(label="AI Assistant", command=self._view_toggle_ai_panel)
         view_menu.add_separator()
         view_menu.add_command(label="Problems", command=lambda: self._not_implemented("Problems Panel"))
@@ -352,6 +405,7 @@ class NexCoreApp(customtkinter.CTk):
     # -- Tab management -------------------------------------------------------
 
     def _new_tab(self, file_path: Optional[str] = None, content: str = "") -> None:
+        self._show_output_panel()
         # Only burn an Untitled number when actually creating a blank
         # buffer - opening a real file must never advance this counter,
         # otherwise "Untitled-N" labels jump ahead every time a file is
@@ -394,6 +448,7 @@ class NexCoreApp(customtkinter.CTk):
         for tid, button in self._tab_buttons.items():
             button.set_active(tid == tab_id)
         tab.widget.focus_editor()
+        self._update_breadcrumb(tab)
         self._update_status_bar()
 
     def _on_text_changed(self, tab_id: int) -> None:
@@ -495,18 +550,18 @@ class NexCoreApp(customtkinter.CTk):
     # -- View menu ------------------------------------------------------
 
     def _view_toggle_explorer(self) -> None:
-        """Show/hide the sidebar and its divider.
+        """Show/hide the complete Activity Bar/sidebar region and divider.
 
         grid_remove() hides a widget while remembering its grid options,
         so a bare grid() call restores it at exactly the same cell -
         much simpler than the pack(before=...) dance the previous
         pack()-based layout needed for the same toggle.
         """
-        if self.sidebar.winfo_manager():
-            self.sidebar.grid_remove()
+        if self.left_sidebar_area.winfo_manager():
+            self.left_sidebar_area.grid_remove()
             self.sidebar_divider.grid_remove()
         else:
-            self.sidebar.grid()
+            self.left_sidebar_area.grid()
             self.sidebar_divider.grid()
 
     def _view_toggle_ai_panel(self) -> None:
@@ -662,9 +717,22 @@ class NexCoreApp(customtkinter.CTk):
         panel in this harness, so this just ensures it's visible and
         gives it focus.
         """
+        self._show_output_panel()
         if not self.console._visible:
             self.console.toggle()
         self.console.text.focus_set()
+
+    def _show_output_panel(self) -> None:
+        """Show the complete Output region, including its divider."""
+        if not self.console_divider.winfo_manager():
+            self.console_divider.pack(side="bottom", fill="x", before=self.editor_stack)
+        if not self.console.winfo_manager():
+            self.console.pack(side="bottom", fill="x", before=self.editor_stack)
+
+    def _hide_output_panel(self) -> None:
+        """Remove every visible part of Output from the center column."""
+        self.console.pack_forget()
+        self.console_divider.pack_forget()
 
     def _mark_tab_edited(self, tab_id: int) -> None:
         """Shared bookkeeping for programmatic (non-keystroke) edits.
@@ -713,6 +781,8 @@ class NexCoreApp(customtkinter.CTk):
     def _show_empty_state(self) -> None:
         """Raise the Welcome page when zero tabs are open (also refreshes
         its "Recent" list, since it may have changed since last shown)."""
+        self._hide_output_panel()
+        self.breadcrumb.hide()
         self.welcome_screen.refresh()
         self.welcome_screen.tkraise()
         self._update_status_bar()
@@ -720,6 +790,7 @@ class NexCoreApp(customtkinter.CTk):
     def _open_recent(self, path: str, kind: str) -> None:
         if kind == "folder":
             self.sidebar.show_directory(path, is_root=True)
+            self._show_output_panel()
         else:
             self._open_path(path)
 
@@ -777,6 +848,7 @@ class NexCoreApp(customtkinter.CTk):
         path = filedialog.askdirectory(title="Open Folder")
         if path:
             self.sidebar.show_directory(path, is_root=True)
+            self._show_output_panel()
             self._record_recent(os.path.basename(path.rstrip("/\\")) or path, path, "folder")
 
     def _save_tab(self, tab: EditorTab) -> bool:
@@ -835,6 +907,7 @@ class NexCoreApp(customtkinter.CTk):
     # -- Execution engine wiring --------------------------------------------
 
     def _run_current(self) -> None:
+        self._show_output_panel()
         tab = self._active_tab()
         if tab is None:
             return
@@ -898,14 +971,28 @@ class NexCoreApp(customtkinter.CTk):
 
     # -- Small helpers -----------------------------------------------------
 
+    def _update_breadcrumb(self, tab: EditorTab) -> None:
+        self.breadcrumb.set_path(tab.file_path, fallback_title=tab.title)
+        if not self.breadcrumb.winfo_manager():
+            self.breadcrumb.pack(side="top", fill="x", before=self.editor_stack)
+
     def _update_status_bar(self) -> None:
         tab = self._active_tab()
         if tab is None:
             self.status_bar.set_file("No file open")
+            self.status_bar.set_editor_info("Ln 1, Col 1", "Plain Text")
             return
         name = tab.file_path or f"{tab.title} (unsaved)"
         marker = "  ●" if tab.is_modified else ""
         self.status_bar.set_file(f"{name}{marker}")
+        line, column = tab.widget.text.index("insert").split(".")
+        suffix = os.path.splitext(tab.file_path or tab.title)[1].lower()
+        language = {
+            ".py": "Python",
+            ".md": "Markdown",
+            ".json": "JSON",
+        }.get(suffix, "Plain Text")
+        self.status_bar.set_editor_info(f"Ln {line}, Col {int(column) + 1}", language)
 
     def _on_close(self) -> None:
         if self.workspace.has_unsaved_changes():
