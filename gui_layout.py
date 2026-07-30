@@ -3,8 +3,8 @@
 This is the top-level assembly file: window setup, the three-column grid
 layout (Explorer 20% / Editor 55% / AI Assistant 25%), the menu bar, the
 Run/Stop toolbar, the status bar, and the ``NexCoreApp`` class that wires
-all of it to the real backend modules (``editor_core.EditorWorkspace``,
-``file_io``, ``execution_engine.ExecutionEngine``).
+all of it to the real backend modules (``tabs_manager.TabsManager``,
+``run_manager.RunManager``, ``terminal_manager.TerminalManager``).
 
 Everything reusable lives in ``ui_components.py`` (widget classes) and
 ``constants.py`` (colors/fonts/syntax-highlighting/sidebar filter) - this
@@ -13,7 +13,7 @@ connect user actions to the backend.
 
 Threading note
 --------------
-``ExecutionEngine`` invokes its callbacks from background reader/monitor
+``TerminalManager`` invokes its callbacks from background reader/monitor
 threads, and ``AIPanel`` makes its Anthropic API calls on a background
 thread. Tkinter widgets may only be touched from the main thread, so both
 of those subsystems only ever push messages onto a plain ``queue.Queue``;
@@ -54,9 +54,10 @@ from ui_components import (
     TestingPanel,
     WelcomeScreen,
 )
-from editor_core import EditorTab, EditorWorkspace
-from execution_engine import ExecutionEngine, ExecutionResult
-import file_io
+from file_tree import FileTree
+from run_manager import RunManager, RunResult
+from tabs_manager import TabError, TabInfo, TabsManager
+from terminal_manager import OutputLine, TerminalManager, TerminalState
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("blue")
@@ -80,28 +81,32 @@ class NexCoreApp(customtkinter.CTk):
         self.editor_font_family = pick_monospace_font(self)
 
         # -- Core, GUI-agnostic objects --------------------------------------
-        # The factory closes over `_pending_frame`, pointed at whichever
-        # tab-content frame is about to receive a new CodeEditor right
-        # before EditorWorkspace.add_tab() is called.
         self._pending_frame: Optional[tk.Frame] = None
-        self.workspace = EditorWorkspace(widget_factory=self._create_editor_widget)
-
+        self.workspace = TabsManager()
         self._output_queue: "queue.Queue[tuple]" = queue.Queue()
-        self.engine = ExecutionEngine(
-            on_stdout=lambda line: self._output_queue.put(("stdout", line)),
-            on_stderr=lambda line: self._output_queue.put(("stderr", line)),
-            on_finished=lambda result: self._output_queue.put(("finished", result)),
-            on_error=lambda message: self._output_queue.put(("error", message)),
+        self.terminal_manager = TerminalManager()
+        self.terminal_manager.set_callbacks(
+            on_output=lambda terminal_id, line: self._output_queue.put(("terminal_output", line)),
+            on_state=lambda terminal_id, state: self._output_queue.put(("terminal_state", state)),
         )
+        self.run_manager = RunManager(
+            self.workspace,
+            self.terminal_manager,
+            on_state_change=lambda running, result: self._output_queue.put(("run_state", (running, result))),
+        )
+        self.file_tree: Optional[FileTree] = None
 
-        self._tab_frames: Dict[int, tk.Frame] = {}
-        self._tab_buttons: Dict[int, TabButton] = {}
-        self._tab_groups: Dict[int, int] = {}
-        self._group_active_tabs: Dict[int, int] = {}
+        self._tab_frames: Dict[str, tk.Frame] = {}
+        self._tab_buttons: Dict[str, TabButton] = {}
+        self._tab_widgets: Dict[str, CodeEditor] = {}
+        self._tab_display_titles: Dict[str, str] = {}
+        self._tab_groups: Dict[str, int] = {}
+        self._group_active_tabs: Dict[int, str] = {}
         self._editor_groups: Dict[int, Dict[str, tk.Widget]] = {}
         self._focused_group = 0
         self._untitled_counter = 0
         self._run_started_at: Optional[float] = None
+        self._stop_requested = False
         self._restore_geometry: Optional[str] = None
         self._drag_origin: Optional[Tuple[int, int]] = None
         # Session-only "Recent" list for the Welcome page - (display_name,
@@ -457,7 +462,7 @@ class NexCoreApp(customtkinter.CTk):
             )
         active_id = self._group_active_tabs.get(group_id)
         if active_id is not None:
-            self.workspace.switch_tab(active_id)
+            self.workspace.set_active_tab(active_id)
             self._update_status_bar()
 
     def _split_editor(self) -> None:
@@ -480,7 +485,7 @@ class NexCoreApp(customtkinter.CTk):
                 activeforeground="#ffffff", relief="solid", bd=1, font=UI_FONT,
             )
 
-        # -- File: fully wired to editor_core / file_io -----------------
+        # -- File: fully wired to TabsManager ----------------------------
         file_menu = make_menu()
         file_menu.add_command(label=f"{ICONS['file']}  New File", command=lambda: self._new_tab(), accelerator="Ctrl+N")
         file_menu.add_command(label=f"{ICONS['file']}  Open File...", command=self._open_file_dialog, accelerator="Ctrl+O")
@@ -609,13 +614,13 @@ class NexCoreApp(customtkinter.CTk):
         label.bind("<Enter>", on_enter)
         label.bind("<Leave>", on_leave)
 
-    # -- Widget factory used by EditorWorkspace ------------------------------
+    # -- GUI-owned editor widget factory ------------------------------------
 
     def _create_editor_widget(self) -> CodeEditor:
         """Build the CodeEditor backing a new tab.
 
-        Called by ``EditorWorkspace.add_tab`` with no arguments; the
-        parent frame it should live in is picked up from
+        Called when a ``TabInfo`` receives its GUI editor; the parent
+        frame it should live in is picked up from
         ``self._pending_frame``, set immediately before ``add_tab`` runs.
         """
         editor = CodeEditor(self._pending_frame, self.editor_font_family)
@@ -631,10 +636,10 @@ class NexCoreApp(customtkinter.CTk):
         # otherwise "Untitled-N" labels jump ahead every time a file is
         # opened, which looks exactly like phantom tab creation.
         if file_path:
-            title = os.path.basename(file_path)
+            tab = self.workspace.open_file(file_path, content=content)
         else:
-            self._untitled_counter += 1
-            title = f"Untitled-{self._untitled_counter}"
+            tab = self.workspace.create_untitled(base_name="Untitled")
+        title = tab.filename
 
         group_id = self._focused_group
         group_widgets = self._editor_groups[group_id]
@@ -642,25 +647,29 @@ class NexCoreApp(customtkinter.CTk):
         content_frame.grid(row=0, column=0, sticky="nsew")
 
         self._pending_frame = content_frame
-        tab = self.workspace.add_tab(file_path=file_path, content=content, title=title)
+        editor = self._create_editor_widget()
         self._pending_frame = None
+        if content:
+            editor.insert("1.0", content)
 
         # Programmatic content load bypasses <KeyRelease>, so force a
         # gutter/highlight refresh once up front.
-        tab.widget.refresh()
-        tab.widget.bind("<KeyRelease>", lambda _e, tid=tab.tab_id: self._on_text_changed(tid))
-        tab.widget.bind("<KeyRelease>", lambda _e: self._update_status_bar())
-        tab.widget.bind("<ButtonRelease-1>", lambda _e, gid=group_id: (
+        editor.refresh()
+        editor.bind("<KeyRelease>", lambda _e, tid=tab.tab_id: self._on_text_changed(tid))
+        editor.bind("<KeyRelease>", lambda _e: self._update_status_bar())
+        editor.bind("<ButtonRelease-1>", lambda _e, gid=group_id: (
             self._focus_editor_group(gid), self._update_status_bar()
         ))
-        tab.widget.bind("<FocusIn>", lambda _e, gid=group_id: self._focus_editor_group(gid))
+        editor.bind("<FocusIn>", lambda _e, gid=group_id: self._focus_editor_group(gid))
 
         self._tab_frames[tab.tab_id] = content_frame
+        self._tab_widgets[tab.tab_id] = editor
+        self._tab_display_titles[tab.tab_id] = title
         self._tab_groups[tab.tab_id] = group_id
         self._group_active_tabs[group_id] = tab.tab_id
 
         button = TabButton(
-            group_widgets["tab_bar"], title=tab.display_title(),
+            group_widgets["tab_bar"], title=self._display_title(tab),
             on_select=lambda tid=tab.tab_id: self.switch_to_tab(tid),
             on_close=lambda tid=tab.tab_id: self.request_close_tab(tid),
         )
@@ -670,30 +679,35 @@ class NexCoreApp(customtkinter.CTk):
         self.switch_to_tab(tab.tab_id)
 
     def switch_to_tab(self, tab_id: int) -> None:
-        tab = self.workspace.switch_tab(tab_id)
+        tab = self.workspace.get_tab(tab_id)
         if tab is None:
             return
+        self.workspace.set_active_tab(tab_id)
         group_id = self._tab_groups.get(tab_id, 0)
         self._group_active_tabs[group_id] = tab_id
         self._focus_editor_group(group_id)
         self._tab_frames[tab_id].tkraise()
         for tid, button in self._tab_buttons.items():
             button.set_active(self._group_active_tabs.get(self._tab_groups.get(tid, 0)) == tid)
-        tab.widget.focus_editor()
+        self._tab_widgets[tab_id].focus_editor()
         self._update_breadcrumb(tab, group_id)
         self._update_status_bar()
 
-    def _on_text_changed(self, tab_id: int) -> None:
+    def _on_text_changed(self, tab_id: str) -> None:
         self._mark_tab_edited(tab_id)
 
-    def _refresh_tab_label(self, tab_id: int) -> None:
+    def _refresh_tab_label(self, tab_id: str) -> None:
         tab = self.workspace.get_tab(tab_id)
         button = self._tab_buttons.get(tab_id)
         if tab is not None and button is not None:
-            button.set_title(tab.display_title())
+            button.set_title(self._display_title(tab))
 
-    def _active_tab(self) -> Optional[EditorTab]:
-        return self.workspace.get_active_tab()
+    def _display_title(self, tab: TabInfo) -> str:
+        title = self._tab_display_titles.get(tab.tab_id, tab.filename)
+        return f"{title}{'*' if tab.is_modified else ''}"
+
+    def _active_tab(self) -> Optional[TabInfo]:
+        return self.workspace.active_tab
 
     def _close_active_tab(self) -> None:
         tab = self._active_tab()
@@ -707,7 +721,7 @@ class NexCoreApp(customtkinter.CTk):
         if tab is None:
             return
         try:
-            tab.widget.text.edit_undo()
+            self._tab_widgets[tab.tab_id].text.edit_undo()
         except tk.TclError:
             pass  # Nothing left to undo.
 
@@ -716,32 +730,32 @@ class NexCoreApp(customtkinter.CTk):
         if tab is None:
             return
         try:
-            tab.widget.text.edit_redo()
+            self._tab_widgets[tab.tab_id].text.edit_redo()
         except tk.TclError:
             pass  # Nothing left to redo.
 
     def _edit_cut(self) -> None:
         tab = self._active_tab()
         if tab is not None:
-            tab.widget.text.event_generate("<<Cut>>")
+            self._tab_widgets[tab.tab_id].text.event_generate("<<Cut>>")
 
     def _edit_copy(self) -> None:
         tab = self._active_tab()
         if tab is not None:
-            tab.widget.text.event_generate("<<Copy>>")
+            self._tab_widgets[tab.tab_id].text.event_generate("<<Copy>>")
 
     def _edit_paste(self) -> None:
         tab = self._active_tab()
         if tab is not None:
-            tab.widget.text.event_generate("<<Paste>>")
+            self._tab_widgets[tab.tab_id].text.event_generate("<<Paste>>")
 
     def _show_about(self) -> None:
         messagebox.showinfo(
             "About NexCore IDE",
             "NexCore IDE\n\n"
             "A CustomTkinter/Tkinter desktop IDE shell wired to\n"
-            "editor_core.EditorWorkspace, file_io, and\n"
-            "execution_engine.ExecutionEngine, with an AI Assistant\n"
+            "TabsManager, RunManager, and TerminalManager, with an\n"
+            "AI Assistant\n"
             "panel backed by the Anthropic API.",
         )
 
@@ -836,18 +850,18 @@ class NexCoreApp(customtkinter.CTk):
         toast.after(2600, toast.destroy)
 
     def _open_settings_tab(self) -> None:
-        for tab in self.workspace.list_tabs():
-            if tab.title == "Settings":
+        for tab in self.workspace.tabs:
+            if self._tab_display_titles.get(tab.tab_id) == "Settings":
                 self.switch_to_tab(tab.tab_id)
                 return
         self._new_tab()
         tab = self._active_tab()
         if tab is None:
             return
-        tab.title = "Settings"
-        tab.mark_saved()
+        self._tab_display_titles[tab.tab_id] = "Settings"
+        self.workspace.mark_dirty(tab.tab_id, False)
         self._refresh_tab_label(tab.tab_id)
-        tab.widget.pack_forget()
+        self._tab_widgets[tab.tab_id].pack_forget()
         frame = self._tab_frames[tab.tab_id]
         page = tk.Frame(frame, bg=COLORS["bg"])
         page.pack(fill="both", expand=True)
@@ -895,7 +909,7 @@ class NexCoreApp(customtkinter.CTk):
         tab = self._active_tab()
         if tab is None:
             return
-        text_widget = tab.widget.text
+        text_widget = self._tab_widgets[tab.tab_id].text
         text_widget.tag_add("sel", "1.0", "end-1c")
         text_widget.mark_set("insert", "end-1c")
         text_widget.see("insert")
@@ -904,7 +918,7 @@ class NexCoreApp(customtkinter.CTk):
         tab = self._active_tab()
         if tab is None:
             return
-        text_widget = tab.widget.text
+        text_widget = self._tab_widgets[tab.tab_id].text
         selection = text_widget.tag_ranges("sel")
         if not selection:
             messagebox.showinfo("Duplicate Selection", "Select some text first.")
@@ -953,7 +967,7 @@ class NexCoreApp(customtkinter.CTk):
         tab = self._active_tab()
         if tab is None:
             return
-        text_widget = tab.widget.text
+        text_widget = self._tab_widgets[tab.tab_id].text
 
         dialog = tk.Toplevel(self)
         dialog.title("Go to Line")
@@ -981,8 +995,8 @@ class NexCoreApp(customtkinter.CTk):
             line = max(1, min(int(value), line_count))
             text_widget.mark_set("insert", f"{line}.0")
             text_widget.see(f"{line}.0")
-            tab.widget.focus_editor()
-            tab.widget.highlight_current_line_number()
+            self._tab_widgets[tab.tab_id].focus_editor()
+            self._tab_widgets[tab.tab_id].highlight_current_line_number()
             dialog.destroy()
 
         entry.bind("<Return>", do_go)
@@ -996,7 +1010,7 @@ class NexCoreApp(customtkinter.CTk):
         tab = self._active_tab()
         if tab is None:
             return
-        text_widget = tab.widget.text
+        text_widget = self._tab_widgets[tab.tab_id].text
         text_widget.tag_configure("search_highlight", background=COLORS["accent"], foreground="#ffffff")
 
         dialog = tk.Toplevel(self)
@@ -1119,7 +1133,7 @@ class NexCoreApp(customtkinter.CTk):
         else:
             self._show_output_panel()
 
-    def _mark_tab_edited(self, tab_id: int) -> None:
+    def _mark_tab_edited(self, tab_id: str) -> None:
         """Shared bookkeeping for programmatic (non-keystroke) edits.
 
         Menu-driven text changes (Replace All, Duplicate Selection) skip
@@ -1129,19 +1143,20 @@ class NexCoreApp(customtkinter.CTk):
         tab = self.workspace.get_tab(tab_id)
         if tab is None:
             return
-        tab.notify_change()
-        tab.widget.refresh()
+        editor = self._tab_widgets[tab_id]
+        self.workspace.update_content(tab_id, editor.get("1.0", "end-1c"))
+        editor.refresh()
         self._refresh_tab_label(tab_id)
         self._update_status_bar()
 
-    def request_close_tab(self, tab_id: int) -> None:
+    def request_close_tab(self, tab_id: str) -> None:
         tab = self.workspace.get_tab(tab_id)
         if tab is None:
             return
 
         if tab.is_modified:
             response = messagebox.askyesnocancel(
-                "Unsaved Changes", f"'{tab.title}' has unsaved changes. Save before closing?",
+                "Unsaved Changes", f"'{self._tab_display_titles.get(tab_id, tab.filename)}' has unsaved changes. Save before closing?",
             )
             if response is None:
                 return
@@ -1150,6 +1165,8 @@ class NexCoreApp(customtkinter.CTk):
 
         frame = self._tab_frames.pop(tab_id, None)
         button = self._tab_buttons.pop(tab_id, None)
+        self._tab_widgets.pop(tab_id, None)
+        self._tab_display_titles.pop(tab_id, None)
         group_id = self._tab_groups.pop(tab_id, 0)
         if self._group_active_tabs.get(group_id) == tab_id:
             group_tabs = [tid for tid, gid in self._tab_groups.items() if gid == group_id]
@@ -1157,17 +1174,17 @@ class NexCoreApp(customtkinter.CTk):
                 self._group_active_tabs[group_id] = group_tabs[-1]
             else:
                 self._group_active_tabs.pop(group_id, None)
-        self.workspace.close_tab(tab_id)
+        self.workspace.close_tab(tab_id, force=True)
         if frame is not None:
             frame.destroy()
         if button is not None:
             button.destroy()
 
-        remaining = self.workspace.list_tabs()
+        remaining = self.workspace.tabs
         if not remaining:
             self._show_empty_state()
         else:
-            active = self.workspace.get_active_tab()
+            active = self.workspace.active_tab
             self.switch_to_tab(active.tab_id)
             if not any(gid == group_id for gid in self._tab_groups.values()):
                 self._editor_groups[group_id]["breadcrumb"].hide()
@@ -1208,28 +1225,30 @@ class NexCoreApp(customtkinter.CTk):
         tab = self._active_tab()
         if tab is None:
             return None
-        return (tab.file_path or tab.title, tab.get_content())
+        return (tab.path, self._tab_widgets[tab.tab_id].get("1.0", "end-1c"))
 
     # -- File I/O wiring --------------------------------------------------
 
     def _open_path(self, path: str) -> None:
-        for tab in self.workspace.list_tabs():
-            if tab.file_path and os.path.normcase(os.path.abspath(tab.file_path)) == os.path.normcase(
+        for tab in self.workspace.tabs:
+            if not tab.is_untitled and os.path.normcase(os.path.abspath(tab.path)) == os.path.normcase(
                 os.path.abspath(path)
             ):
                 self.switch_to_tab(tab.tab_id)
-                self._record_recent(os.path.basename(tab.file_path), tab.file_path, "file")
+                self._record_recent(os.path.basename(tab.path), tab.path, "file")
                 return
 
-        result = file_io.open_file(path)
-        if not result.success:
-            messagebox.showerror("Open File Failed", result.message)
-            self.status_bar.set_status(result.message)
+        try:
+            tab = self.workspace.open_file(path)
+        except (OSError, UnicodeError, TabError) as exc:
+            message = f"Could not open '{path}': {exc}"
+            messagebox.showerror("Open File Failed", message)
+            self.status_bar.set_status(message)
             return
 
-        self._new_tab(file_path=result.path, content=result.content)
-        self._record_recent(os.path.basename(result.path), result.path, "file")
-        self.status_bar.set_status(result.message)
+        self._new_tab(file_path=tab.path, content=tab.content)
+        self._record_recent(os.path.basename(tab.path), tab.path, "file")
+        self.status_bar.set_status(f"Opened {tab.path} successfully.")
 
     def _open_file_dialog(self) -> None:
         path = filedialog.askopenfilename(
@@ -1242,33 +1261,44 @@ class NexCoreApp(customtkinter.CTk):
     def _choose_workspace_folder(self) -> None:
         path = filedialog.askdirectory(title="Open Folder")
         if path:
-            self.sidebar.show_directory(path, is_root=True)
-            self._show_output_panel()
-            self._record_recent(os.path.basename(path.rstrip("/\\")) or path, path, "folder")
+            try:
+                if self.file_tree is not None:
+                    self.file_tree.shutdown()
+                self.file_tree = FileTree(path)
+                self.file_tree.load_root()
+                self.sidebar.show_directory(path, is_root=True)
+                self._show_output_panel()
+                self._record_recent(os.path.basename(path.rstrip("/\\")) or path, path, "folder")
+            except (OSError, ValueError) as exc:
+                message = f"Could not open folder '{path}': {exc}"
+                messagebox.showerror("Open Folder Failed", message)
+                self.status_bar.set_status(message)
 
-    def _save_tab(self, tab: EditorTab) -> bool:
+    def _save_tab(self, tab: TabInfo) -> bool:
         """Save ``tab`` to disk, prompting for a path if it has none.
 
         Returns ``True`` if the tab ended up saved, ``False`` if the
         user cancelled a required "Save As" dialog or the write failed.
         """
-        if tab.file_path is None:
+        if tab.is_untitled:
             return self._save_tab_as(tab)
 
-        result = file_io.save_file(tab.file_path, tab.get_content())
-        if not result.success:
-            messagebox.showerror("Save Failed", result.message)
-            self.status_bar.set_status(result.message)
+        self.workspace.update_content(tab.tab_id, self._tab_widgets[tab.tab_id].get("1.0", "end-1c"))
+        try:
+            saved_tab = self.workspace.save(tab.tab_id)
+        except (OSError, UnicodeError, TabError) as exc:
+            message = f"Could not save '{tab.path}': {exc}"
+            messagebox.showerror("Save Failed", message)
+            self.status_bar.set_status(message)
             return False
 
-        tab.mark_saved()
-        self._refresh_tab_label(tab.tab_id)
+        self._refresh_tab_label(saved_tab.tab_id)
         self._update_status_bar()
-        self.status_bar.set_status(result.message)
+        self.status_bar.set_status(f"Saved {saved_tab.path} successfully.")
         self._show_toast("File saved")
         return True
 
-    def _save_tab_as(self, tab: EditorTab) -> bool:
+    def _save_tab_as(self, tab: TabInfo) -> bool:
         path = filedialog.asksaveasfilename(
             title="Save As", defaultextension=".py",
             filetypes=[("Python Files", "*.py"), ("Text Files", "*.txt"), ("All Files", "*.*")],
@@ -1276,18 +1306,19 @@ class NexCoreApp(customtkinter.CTk):
         if not path:
             return False
 
-        result = file_io.save_file_as(path, tab.get_content())
-        if not result.success:
-            messagebox.showerror("Save As Failed", result.message)
-            self.status_bar.set_status(result.message)
+        self.workspace.update_content(tab.tab_id, self._tab_widgets[tab.tab_id].get("1.0", "end-1c"))
+        try:
+            saved_tab = self.workspace.save_as(tab.tab_id, path)
+        except (OSError, UnicodeError, TabError) as exc:
+            message = f"Could not save '{path}': {exc}"
+            messagebox.showerror("Save As Failed", message)
+            self.status_bar.set_status(message)
             return False
 
-        tab.file_path = result.path
-        tab.title = os.path.basename(result.path)
-        tab.mark_saved()
-        self._refresh_tab_label(tab.tab_id)
+        self._tab_display_titles[tab.tab_id] = saved_tab.filename
+        self._refresh_tab_label(saved_tab.tab_id)
         self._update_status_bar()
-        self.status_bar.set_status(result.message)
+        self.status_bar.set_status(f"Saved {saved_tab.path} successfully.")
         self._show_toast("File saved")
         return True
 
@@ -1310,21 +1341,29 @@ class NexCoreApp(customtkinter.CTk):
         if tab is None:
             return
 
-        if self.engine.is_running():
+        if self.run_manager.is_running:
             messagebox.showwarning("Already Running", "A script is already running.")
             return
 
-        if tab.file_path is None or tab.is_modified:
+        if tab.is_untitled or tab.is_modified:
             if not self._save_tab(tab):
                 self.status_bar.set_status("Run cancelled: file was not saved.")
                 return
 
         self.console.clear()
-        filename = os.path.basename(tab.file_path)
+        filename = os.path.basename(tab.path)
         display_name = f'"{filename}"' if " " in filename else filename
         self.console.append(f"$ python {display_name}\n\n", kind="command")
 
-        if self.engine.run(tab.file_path):
+        try:
+            self._stop_requested = False
+            terminal_id = self.run_manager.run_file(tab.path)
+        except (OSError, ValueError, TabError) as exc:
+            message = f"Failed to start process: {exc}"
+            self.console.append(f"{message}\n", kind="failure")
+            self.status_bar.set_status(message)
+            return
+        if terminal_id:
             self._run_started_at = time.perf_counter()
             self.console.set_running(True)
             self.run_button.configure(state="disabled")
@@ -1332,7 +1371,9 @@ class NexCoreApp(customtkinter.CTk):
             self.status_bar.set_status("Running...")
 
     def _stop_running(self) -> None:
-        if self.engine.stop():
+        if self.run_manager.is_running:
+            self._stop_requested = True
+            self.run_manager.stop()
             self.status_bar.set_status("Stop requested...")
         else:
             self.status_bar.set_status("No running process to stop.")
@@ -1347,35 +1388,40 @@ class NexCoreApp(customtkinter.CTk):
         try:
             while True:
                 kind, payload = self._output_queue.get_nowait()
-                if kind == "stdout":
-                    self.console.append(f"{payload}\n", kind="stdout")
-                elif kind == "stderr":
-                    self.console.append(f"{payload}\n", kind="stderr")
-                elif kind == "finished":
-                    result: ExecutionResult = payload
+                if kind == "terminal_output":
+                    line: OutputLine = payload
+                    output_kind = "stderr" if line.stream == "stderr" else "stdout"
+                    self.console.append(f"{line.text}\n", kind=output_kind)
+                elif kind == "run_state":
+                    running, result = payload
+                    if running:
+                        continue
+                    result: Optional[RunResult]
                     self.console.set_running(False)
-                    elapsed = time.perf_counter() - self._run_started_at if self._run_started_at else 0.0
+                    elapsed = (
+                        result.execution_time if result is not None
+                        else time.perf_counter() - self._run_started_at if self._run_started_at else 0.0
+                    )
                     self._run_started_at = None
-                    if result.was_killed:
-                        status = "Killed"
+                    if self._stop_requested or result is None:
+                        status = "Stopped"
                         message = "Process stopped by user"
                         message_kind = "failure"
                     else:
-                        status = f"Exit Code: {result.return_code}"
-                        message = f"Process finished with exit code {result.return_code}"
-                        message_kind = "success" if result.return_code == 0 else "failure"
+                        status = f"Exit Code: {result.exit_code}"
+                        message = f"Process finished with exit code {result.exit_code}"
+                        message_kind = "success" if result.exit_code == 0 else "failure"
                     self.console.append(f"\n{message}\n", kind=message_kind)
                     self.console.append(f"Finished in {elapsed:.2f}s\n", kind="muted")
                     self.run_button.configure(state="normal")
                     self.stop_button.configure(state="disabled")
                     self.status_bar.set_status(status)
-                elif kind == "error":
-                    self.console.set_running(False)
-                    self._run_started_at = None
-                    self.console.append(f"\n{payload}\n", kind="failure")
-                    self.run_button.configure(state="normal")
-                    self.stop_button.configure(state="disabled")
-                    self.status_bar.set_status(f"Error: {payload}")
+                    self._stop_requested = False
+                elif kind == "terminal_state":
+                    state: TerminalState = payload
+                    if not state.is_running and not self.run_manager.is_running:
+                        self.run_button.configure(state="normal")
+                        self.stop_button.configure(state="disabled")
         except queue.Empty:
             pass
         finally:
@@ -1383,11 +1429,14 @@ class NexCoreApp(customtkinter.CTk):
 
     # -- Small helpers -----------------------------------------------------
 
-    def _update_breadcrumb(self, tab: EditorTab, group_id: Optional[int] = None) -> None:
+    def _update_breadcrumb(self, tab: TabInfo, group_id: Optional[int] = None) -> None:
         group_id = self._tab_groups.get(tab.tab_id, self._focused_group) if group_id is None else group_id
         widgets = self._editor_groups[group_id]
         breadcrumb = widgets["breadcrumb"]
-        breadcrumb.set_path(tab.file_path, fallback_title=tab.title)
+        breadcrumb.set_path(
+            None if tab.is_untitled else tab.path,
+            fallback_title=self._tab_display_titles.get(tab.tab_id, tab.filename),
+        )
         if not breadcrumb.winfo_manager():
             breadcrumb.pack(side="top", fill="x", before=widgets["stack"])
 
@@ -1397,11 +1446,11 @@ class NexCoreApp(customtkinter.CTk):
             self.status_bar.set_file("No file open")
             self.status_bar.set_editor_info("Ln 1, Col 1", "Plain Text")
             return
-        name = tab.file_path or f"{tab.title} (unsaved)"
+        name = f"{self._tab_display_titles.get(tab.tab_id, tab.filename)} (unsaved)" if tab.is_untitled else tab.path
         marker = "  ●" if tab.is_modified else ""
         self.status_bar.set_file(f"{name}{marker}")
-        line, column = tab.widget.text.index("insert").split(".")
-        suffix = os.path.splitext(tab.file_path or tab.title)[1].lower()
+        line, column = self._tab_widgets[tab.tab_id].text.index("insert").split(".")
+        suffix = os.path.splitext(tab.path)[1].lower()
         language = {
             ".py": "Python",
             ".md": "Markdown",
@@ -1410,11 +1459,14 @@ class NexCoreApp(customtkinter.CTk):
         self.status_bar.set_editor_info(f"Ln {line}, Col {int(column) + 1}", language)
 
     def _on_close(self) -> None:
-        if self.workspace.has_unsaved_changes():
+        if any(tab.is_modified for tab in self.workspace.tabs):
             if not messagebox.askyesno("Unsaved Changes", "Some tabs have unsaved changes. Quit anyway?"):
                 return
-        if self.engine.is_running():
-            self.engine.stop()
+        if self.run_manager.is_running:
+            self.run_manager.stop()
+        self.terminal_manager.shutdown()
+        if self.file_tree is not None:
+            self.file_tree.shutdown()
         self.destroy()
 
 

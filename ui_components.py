@@ -5,14 +5,13 @@ Every class here is a self-contained, importable Tkinter widget that
 these classes talk to each other directly - each one takes plain
 callables (``on_select``, ``on_file_selected``, ``get_context``, ...) as
 constructor arguments, so ``gui_layout.py`` is the only place that wires
-them to ``editor_core``/``file_io``/``execution_engine``.
+them to ``tabs_manager``/``run_manager``/``terminal_manager``.
 
 Contents
 --------
 - :class:`CodeEditor` - line-numbered, syntax-highlighted text editor.
   Implements the ``get``/``insert``/``delete``/``bind`` surface that
-  ``editor_core.TextWidgetLike`` expects, so ``EditorWorkspace`` can use
-  it as a drop-in widget factory.
+  the GUI-owned text-buffer surface synchronized with ``TabsManager``.
 - :class:`TabButton` - a single flat editor tab with a hover-to-reveal
   close "x".
 - :class:`Sidebar` - a recursive, lazily-expanding file explorer built on
@@ -666,10 +665,8 @@ class ExtensionsPanel(_SidebarView):
 
 # ============================================================================
 # The code editor: a line-number gutter + a syntax-highlighted text buffer,
-# scroll-synced together. Implements the get/insert/delete/bind surface
-# that editor_core.TextWidgetLike expects, so EditorWorkspace can use a
-# factory that returns one of these exactly like it would a plain
-# tkinter.Text or a CTkTextbox.
+# scroll-synced together. Implements the text-buffer surface synchronized
+# with the data-only TabsManager backend by gui_layout.py.
 # ============================================================================
 class CodeEditor(tk.Frame):
     """VS Code-style editor pane: line numbers + syntax-highlighted text."""
@@ -776,7 +773,7 @@ class CodeEditor(tk.Frame):
         menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
-    # -- TextWidgetLike protocol (matches editor_core.TextWidgetLike) -----
+    # -- Text-buffer protocol used for TabsManager synchronization -------
 
     def get(self, start: str, end: Optional[str] = None) -> str:
         return self.text.get(start, end)
@@ -797,7 +794,7 @@ class CodeEditor(tk.Frame):
 
     def refresh(self) -> None:
         """Recompute gutter + highlighting after a programmatic content
-        change (e.g. ``EditorTab.set_content`` loading a file), which
+        change (e.g. loading ``TabInfo.content`` into a file), which
         bypasses the <KeyRelease> binding used for interactive typing.
         """
         self._update_line_numbers()
@@ -923,7 +920,7 @@ class TabButton(tk.Frame):
         """Prefix the tab's filename with a small file-type icon - a
         Python-specific glyph for ``.py`` files, a generic document icon
         otherwise. Strips a trailing modified-marker "*" (added by
-        ``EditorTab.display_title()``) before checking the extension so
+        the GUI's modified title) before checking the extension so
         the icon doesn't flicker between file-type and "unknown" as a
         tab's modified state toggles.
         """
@@ -1483,7 +1480,7 @@ class ConsolePanel(tk.Frame):
         mock_problems = (
             ("⚠", "constants.py:42", "unused import 'os'", COLORS["problem_warning"]),
             ("⚠", "gui_layout.py:76", "mock layout warning", COLORS["problem_warning"]),
-            ("✕", "editor_core.py:118", "undefined variable 'tmp'", COLORS["problem_error"]),
+            ("✕", "tabs_manager.py:118", "mock undefined variable 'tmp'", COLORS["problem_error"]),
         )
         for icon, location, message, color in mock_problems:
             row = tk.Frame(self.problems_frame, bg=COLORS["console_bg"])
@@ -1891,7 +1888,7 @@ class WelcomeScreen(tk.Frame):
 
 # ============================================================================
 # Right column: "AI Assistant" chat panel wired to the real Anthropic API.
-# Network calls run on a background thread (mirroring how ExecutionEngine
+# Network calls run on a background thread (mirroring how TerminalManager
 # streams subprocess output) so the UI never freezes while waiting on a
 # response; a queue + periodic after() poll is the only bridge back to
 # Tkinter, which may only be touched from the main thread.
