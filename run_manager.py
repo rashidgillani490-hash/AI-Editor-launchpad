@@ -49,6 +49,7 @@ class RunManager:
         self.on_state_change = on_state_change
 
         self._active_terminal_id: Optional[str] = None
+        self._base_state_callbacks: dict[str, Optional[Callable]] = {}
         self._is_running = False
         self._last_result: Optional[RunResult] = None
 
@@ -122,10 +123,19 @@ class RunManager:
             self._active_terminal_id = inst.terminal_id
 
         # Wire completion callback
-        original_state_cb = inst.on_state_change
+        # Reused terminals already carry the wrapper installed by the
+        # previous run. Preserve the original TerminalManager callback
+        # once so repeated runs do not build a callback chain and emit
+        # duplicate completion events.
+        original_state_cb = self._base_state_callbacks.setdefault(
+            inst.terminal_id, inst.on_state_change,
+        )
+        completion_sent = False
 
         def _on_state(state):
-            if not state.is_running and state.exit_code is not None:
+            nonlocal completion_sent
+            if not state.is_running and state.exit_code is not None and not completion_sent:
+                completion_sent = True
                 self._is_running = False
                 self._last_result = RunResult(
                     exit_code=state.exit_code,
