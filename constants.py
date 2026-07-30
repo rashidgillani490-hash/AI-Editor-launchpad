@@ -41,8 +41,12 @@ COLORS = {
     "text_fg": "#d4d4d4",
     "selection_bg": "#264f78",
     "hover_bg": "#2a2d2e",
-    "menu_bg": "#3c3c3c",
+    "menu_bg": "#25252b",
     "menu_hover": "#094771",
+    "floating_bg": "#25252b",
+    "floating_border": "#4a4a57",
+    "floating_overlay": "#111116",
+    "floating_glow": "#30304a",
     "console_bg": "#1e1e1e",
     "console_stdout": "#d4d4d4",
     "console_stderr": "#f48771",
@@ -72,6 +76,7 @@ COLORS = {
     "breadcrumb_hover_bg": "#2a2d2e",
     "problem_warning": "#cca700",
     "problem_error": "#f14c4c",
+    "split_focus": "#3794ff",
     "scm_modified": "#e2c08d",
     "scm_untracked": "#73c991",
     "extension_icon_bg": "#3776ab",
@@ -95,6 +100,56 @@ UI_FONT_BOLD = ("Segoe UI", 13, "bold")
 TOPBAR_FONT = ("Segoe UI", 13)
 SMALL_FONT = ("Segoe UI", 12)                # Status bar, dialog hint text.
 HEADER_FONT = ("Segoe UI", 12, "bold")        # EXPLORER / OUTPUT / AI ASSISTANT section headers.
+ICON_FONT_FAMILY = "Segoe MDL2 Assets"
+ICON_FONT = (ICON_FONT_FAMILY, 14)
+ICON_FONT_LARGE = (ICON_FONT_FAMILY, 20)
+
+# Microsoft Segoe Fluent Icons glyphs, available with Windows.  Keeping
+# codepoints here prevents individual widgets from mixing emoji, text
+# symbols, and hand-drawn approximations.
+ICONS = {
+    "back": "\ue72b",
+    "forward": "\ue72a",
+    "search": "\ue721",
+    "chevron_down": "\ue70d",
+    "close": "\ue711",
+    "minimize": "\ue921",
+    "maximize": "\ue922",
+    "restore": "\ue923",
+    "add": "\ue710",
+    "delete": "\ue74d",
+    "more": "\ue712",
+    "settings": "\ue713",
+    "account": "\ue77b",
+    "folder": "\ue8b7",
+    "folder_open": "\ue838",
+    "file": "\ue8a5",
+    "explorer": "\ue8b7",
+    "source_control": "\ue8a7",
+    "run": "\ue768",
+    "stop": "\ue71a",
+    "debug": "\ue7a7",
+    "extensions": "\ue71b",
+    "testing": "\ue9d9",
+    "sparkle": "\ue735",
+    "panel_left": "\ue700",
+    "panel_right": "\ue89f",
+    "panel_bottom": "\ue90c",
+    "split": "\ue8a9",
+    "terminal": "\ue756",
+    "warning": "\ue7ba",
+    "error": "\ue783",
+    "branch": "\ue8ad",
+    "bell": "\ue7ed",
+    "clear": "\ue894",
+    "fullscreen": "\ue740",
+    "copy": "\ue8c8",
+    "send": "\ue724",
+    "chat": "\ue8bd",
+    "save": "\ue74e",
+    "python": "\ue943",
+    "app": "\ue7c5",
+}
 
 CODE_FONT_SIZE = 15
 CODE_GUTTER_FONT_SIZE = 13

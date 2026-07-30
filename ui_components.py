@@ -51,6 +51,9 @@ from constants import (
     CODE_LINE_SPACING,
     COLORS,
     HEADER_FONT,
+    ICONS,
+    ICON_FONT,
+    ICON_FONT_LARGE,
     SMALL_FONT,
     SYNTAX_TAGS,
     UI_FONT,
@@ -162,12 +165,18 @@ class ActivityBar(tk.Frame):
         ("source_control", "⑂", "Source Control"),
         ("run_debug", "▷", "Run and Debug"),
         ("extensions", "▦", "Extensions"),
+        ("testing", "\u2697", "Testing"),
+        ("ai_assistant", "\u2726", "AI Assistant"),
     )
 
-    def __init__(self, parent: tk.Misc, on_select: Callable[[str], None]) -> None:
+    def __init__(
+        self, parent: tk.Misc, on_select: Callable[[str], None],
+        on_settings: Optional[Callable] = None,
+    ) -> None:
         super().__init__(parent, bg=COLORS["activity_bar_bg"], width=48)
         self.grid_propagate(False)
         self._on_select = on_select
+        self._on_settings = on_settings
         self._buttons: Dict[str, Tuple[tk.Frame, tk.Frame, tk.Canvas]] = {}
         self._active = "explorer"
 
@@ -218,6 +227,9 @@ class ActivityBar(tk.Frame):
         return row
 
     def _show_utility_popup(self, event: tk.Event, key: str) -> None:
+        if key == "settings" and self._on_settings:
+            self._on_settings()
+            return
         menu = tk.Menu(
             self, tearoff=0, bg=COLORS["menu_bg"], fg=COLORS["text_fg"],
             activebackground=COLORS["menu_hover"], activeforeground="#ffffff",
@@ -229,7 +241,19 @@ class ActivityBar(tk.Frame):
 
     @staticmethod
     def _draw_icon(canvas: tk.Canvas, key: str, color: str) -> None:
-        """Draw simple vector icons so rendering never depends on glyph fonts."""
+        """Render every Activity Bar glyph from Segoe Fluent Icons."""
+        icon_key = {
+            "explorer": "explorer", "search": "search",
+            "source_control": "source_control", "run_debug": "debug",
+            "extensions": "extensions", "testing": "testing",
+            "ai_assistant": "sparkle", "accounts": "account", "settings": "settings",
+        }.get(key, "app")
+        canvas.create_text(
+            23, 23, text=ICONS[icon_key], fill=color,
+            font=ICON_FONT_LARGE, tags="activity_icon",
+        )
+        return
+        # Legacy vector definitions retained below only as documentation.
         common = {"fill": color, "outline": color, "width": 1.8, "tags": "activity_icon"}
         if key == "explorer":
             canvas.create_rectangle(13, 10, 28, 29, **common)
@@ -252,6 +276,15 @@ class ActivityBar(tk.Frame):
         elif key == "extensions":
             for x, y in ((11, 10), (23, 10), (11, 22), (23, 22)):
                 canvas.create_rectangle(x, y, x + 9, y + 9, **common)
+        elif key == "ai_assistant":
+            canvas.create_polygon(
+                23, 8, 26, 17, 35, 20, 26, 23, 23, 34, 20, 23, 11, 20, 20, 17,
+                fill="", outline=color, width=1.8, tags="activity_icon",
+            )
+        elif key == "testing":
+            canvas.create_line(17, 9, 27, 9, fill=color, width=2, tags="activity_icon")
+            canvas.create_line(20, 9, 20, 19, 12, 33, 34, 33, 26, 19, 26, 9,
+                               fill=color, width=1.8, tags="activity_icon")
         elif key == "accounts":
             canvas.create_oval(17, 8, 29, 20, fill="", outline=color, width=1.8, tags="activity_icon")
             canvas.create_arc(
@@ -272,6 +305,8 @@ class ActivityBar(tk.Frame):
         for item in canvas.find_withtag("activity_icon"):
             item_type = canvas.type(item)
             if item_type in {"line", "polygon"}:
+                canvas.itemconfigure(item, fill=color)
+            elif item_type == "text":
                 canvas.itemconfigure(item, fill=color)
             elif item_type in {"rectangle", "oval", "arc"}:
                 canvas.itemconfigure(item, outline=color)
@@ -303,6 +338,26 @@ class ActivityBar(tk.Frame):
                 icon,
                 COLORS["activity_icon_active_fg"] if active else COLORS["activity_icon_fg"],
             )
+
+
+class TestingPanel(_SidebarView):
+    """Visual-only Testing view; test discovery requires a real adapter."""
+
+    def __init__(self, parent: tk.Misc) -> None:
+        super().__init__(parent, "Testing")
+        tk.Label(
+            self, text="\u2697", bg=COLORS["sidebar_bg"], fg=COLORS["gutter_fg"],
+            font=(UI_FONT[0], 30),
+        ).pack(pady=(42, 8))
+        tk.Label(
+            self, text="No tests found", bg=COLORS["sidebar_bg"], fg=COLORS["text_fg"],
+            font=UI_FONT_BOLD,
+        ).pack()
+        tk.Label(
+            self, text="Configure a test framework to discover tests.",
+            bg=COLORS["sidebar_bg"], fg=COLORS["tab_inactive_fg"],
+            font=SMALL_FONT, wraplength=190, justify="center",
+        ).pack(padx=14, pady=8)
 
 
 class SearchPanel(_SidebarView):
@@ -546,14 +601,42 @@ class ExtensionsPanel(_SidebarView):
         ("P", "Pylance", "Fast, feature-rich Python support"),
         ("G", "GitLens", "Supercharge Git inside the editor"),
     )
+    EXTENSION_SETS = {
+        "Installed": (("P", "Python", "Enabled in this workspace"), ("G", "GitLens", "Installed")),
+        "Marketplace": MOCK_EXTENSIONS,
+        "Recommended": (("R", "Ruff", "Fast Python linting and formatting"), ("D", "Docker", "Container tools")),
+    }
 
     def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent, "Extensions")
         search = _PlaceholderEntry(self, "Search Extensions in Marketplace")
         search.pack(fill="x", padx=10, pady=(0, 10), ipady=6)
 
-        for icon_text, name, description in self.MOCK_EXTENSIONS:
-            card = tk.Frame(self, bg=COLORS["sidebar_bg"], cursor="hand2")
+        tabs = tk.Frame(self, bg=COLORS["sidebar_bg"])
+        tabs.pack(fill="x", padx=7, pady=(0, 7))
+        self._category_labels = {}
+        for category in ("Installed", "Marketplace", "Recommended"):
+            label = tk.Label(
+                tabs, text=category, bg=COLORS["sidebar_bg"], fg=COLORS["tab_inactive_fg"],
+                font=SMALL_FONT, padx=5, pady=4, cursor="hand2",
+            )
+            label.pack(side="left")
+            label.bind("<Button-1>", lambda _event, name=category: self._show_category(name))
+            self._category_labels[category] = label
+        self._cards_frame = tk.Frame(self, bg=COLORS["sidebar_bg"])
+        self._cards_frame.pack(fill="both", expand=True)
+        self._show_category("Marketplace")
+
+    def _show_category(self, category: str) -> None:
+        for name, label in self._category_labels.items():
+            label.configure(
+                fg=COLORS["text_fg"] if name == category else COLORS["tab_inactive_fg"],
+                bg=COLORS["hover_bg"] if name == category else COLORS["sidebar_bg"],
+            )
+        for child in self._cards_frame.winfo_children():
+            child.destroy()
+        for icon_text, name, description in self.EXTENSION_SETS[category]:
+            card = tk.Frame(self._cards_frame, bg=COLORS["sidebar_bg"], cursor="hand2")
             card.pack(fill="x", padx=7, pady=3)
             icon = tk.Label(
                 card, text=icon_text, width=3, height=2, bg=COLORS["extension_icon_bg"],
@@ -562,7 +645,8 @@ class ExtensionsPanel(_SidebarView):
             icon.pack(side="left", padx=(3, 8), pady=6)
 
             install = tk.Button(
-                card, text="Install", bg=COLORS["accent"], fg="#ffffff",
+                card, text="Installed" if category == "Installed" else "Install",
+                bg=COLORS["topbar_bg"] if category == "Installed" else COLORS["accent"], fg="#ffffff",
                 activebackground=COLORS["menu_hover"], activeforeground="#ffffff",
                 relief="flat", bd=0, font=SMALL_FONT, padx=8, pady=2, cursor="hand2",
             )
@@ -651,6 +735,12 @@ class CodeEditor(tk.Frame):
         for tag in SYNTAX_TAGS:
             self.text.tag_configure(tag, foreground=COLORS[f"syntax_{tag}"])
 
+        self.minimap = tk.Canvas(
+            self, width=58, bg=COLORS["gutter_bg"], highlightthickness=0, bd=0,
+            takefocus=0,
+        )
+        self.minimap.pack(side="right", fill="y")
+
         self.vscroll = ttk.Scrollbar(self, orient="vertical", command=self._on_scrollbar)
         self.vscroll.pack(side="right", fill="y")
         self.text.configure(yscrollcommand=self._on_text_scroll)
@@ -662,11 +752,29 @@ class CodeEditor(tk.Frame):
         # delegates bind() with add=True.
         self.text.bind("<KeyRelease>", self._on_internal_change)
         self.text.bind("<ButtonRelease-1>", self._on_cursor_move)
+        self.text.bind("<Button-3>", self._show_context_menu)
         self.linenumbers.bind("<MouseWheel>", self._forward_scroll_to_text)
         self.linenumbers.bind("<Button-4>", self._forward_scroll_to_text)
         self.linenumbers.bind("<Button-5>", self._forward_scroll_to_text)
 
         self._update_line_numbers()
+
+    def _show_context_menu(self, event: tk.Event) -> str:
+        menu = tk.Menu(
+            self, tearoff=0, bg=COLORS["menu_bg"], fg=COLORS["text_fg"],
+            activebackground=COLORS["menu_hover"], activeforeground="#ffffff",
+            relief="solid", bd=1, font=UI_FONT,
+        )
+        menu.add_command(label="Cut", command=lambda: self.text.event_generate("<<Cut>>"))
+        menu.add_command(label="Copy", command=lambda: self.text.event_generate("<<Copy>>"))
+        menu.add_command(label="Paste", command=lambda: self.text.event_generate("<<Paste>>"))
+        menu.add_separator()
+        menu.add_command(label="Go to Definition", command=lambda: None)
+        menu.add_command(label="Format Document", command=lambda: None)
+        menu.add_separator()
+        menu.add_command(label="Change Language Mode", command=lambda: None)
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
 
     # -- TextWidgetLike protocol (matches editor_core.TextWidgetLike) -----
 
@@ -731,6 +839,20 @@ class CodeEditor(tk.Frame):
         self.linenumbers.tag_add("right", "1.0", "end")
         self.linenumbers.configure(state="disabled")
         self._highlight_current_line_number()
+        self._draw_minimap(line_count)
+
+    def _draw_minimap(self, line_count: int) -> None:
+        self.minimap.delete("all")
+        content = self.text.get("1.0", "end-1c").splitlines()
+        height = max(1, self.minimap.winfo_height())
+        step = max(2, min(4, height / max(1, line_count)))
+        for index, line in enumerate(content[:250]):
+            y = 3 + index * step
+            if y > height:
+                break
+            width = min(50, 5 + len(line.strip()) * 0.7)
+            color = COLORS["syntax_comment"] if line.lstrip().startswith("#") else COLORS["gutter_fg"]
+            self.minimap.create_line(5, y, width, y, fill=color, width=1)
 
     def _highlight_current_line_number(self) -> None:
         current_line = int(self.text.index("insert").split(".")[0])
@@ -764,8 +886,9 @@ class TabButton(tk.Frame):
 
         self.close_label = tk.Label(
             self.inner, text="×", bg=COLORS["tab_inactive_bg"], fg=COLORS["tab_inactive_bg"],
-            font=("Segoe UI", 13), padx=6, cursor="hand2",
+            font=(ICON_FONT[0], 11), padx=6, cursor="hand2",
         )
+        self.close_label.configure(text=ICONS["close"])
         self.close_label.pack(side="left")
 
         tk.Frame(self, bg=COLORS["border"], width=1).pack(side="right", fill="y")
@@ -805,7 +928,7 @@ class TabButton(tk.Frame):
         tab's modified state toggles.
         """
         base = title[:-1] if title.endswith("*") else title
-        icon = "\U0001F40D" if base.endswith(".py") else "\U0001F4C4"
+        icon = ICONS["python"] if base.endswith(".py") else ICONS["file"]
         return f"{icon}  {title}"
 
     def _restyle(self) -> None:
@@ -882,15 +1005,15 @@ class Sidebar(tk.Frame):
         # are dimmed and inert only while no folder is open.
         header_icon_font = ("Segoe UI Symbol", 18)
         self.open_folder_icon = tk.Label(
-            header, text="\U0001F4C2", bg=COLORS["sidebar_bg"], fg=COLORS["sidebar_header_fg"],
-            font=header_icon_font, padx=3, pady=3, cursor="hand2",
+            header, text=ICONS["folder_open"], bg=COLORS["sidebar_bg"], fg=COLORS["sidebar_header_fg"],
+            font=ICON_FONT, padx=3, pady=3, cursor="hand2",
         )
         self.open_folder_icon.pack(side="right", padx=2)
         self.open_folder_icon.bind("<Button-1>", lambda _e: self.on_open_folder())
 
         self.open_file_icon = tk.Label(
-            header, text="\U0001F4C4", bg=COLORS["sidebar_bg"], fg=COLORS["sidebar_header_fg"],
-            font=header_icon_font, padx=3, pady=3, cursor="hand2",
+            header, text=ICONS["file"], bg=COLORS["sidebar_bg"], fg=COLORS["sidebar_header_fg"],
+            font=ICON_FONT, padx=3, pady=3, cursor="hand2",
         )
         self.open_file_icon.pack(side="right", padx=2)
         if self.on_open_file:
@@ -972,6 +1095,7 @@ class Sidebar(tk.Frame):
         # spuriously toggle a folder's expand state just from arrowing
         # past it. <Button-1> only fires for an actual click.
         self.tree.bind("<Button-1>", self._on_tree_click)
+        self.tree.bind("<Button-3>", self._show_tree_context_menu)
 
         self._update_header_icon_states()  # Start dimmed: no folder is open yet.
 
@@ -1056,7 +1180,7 @@ class Sidebar(tk.Frame):
         for name in names:
             full_path = os.path.join(dir_path, name)
             is_dir = os.path.isdir(full_path)
-            icon = self._FOLDER_CLOSED_ICON if is_dir else "\U0001F4C4"
+            icon = self._FOLDER_CLOSED_ICON if is_dir else ICONS["file"]
             tags = ("pyfile",) if (not is_dir and name.endswith(".py")) else ()
             item_id = self.tree.insert(parent_item, "end", text=f" {icon}  {name}", open=False, tags=tags)
             self._item_paths[item_id] = full_path
@@ -1068,8 +1192,8 @@ class Sidebar(tk.Frame):
 
     # Distinct glyphs for a folder's closed vs. expanded state, matching
     # how a real file explorer swaps its folder icon on expand/collapse.
-    _FOLDER_CLOSED_ICON = "\U0001F4C1"
-    _FOLDER_OPEN_ICON = "\U0001F4C2"
+    _FOLDER_CLOSED_ICON = ICONS["folder"]
+    _FOLDER_OPEN_ICON = ICONS["folder_open"]
 
     def _set_folder_icon(self, item: str, opened: bool) -> None:
         if not self._item_is_dir.get(item, False):
@@ -1131,6 +1255,28 @@ class Sidebar(tk.Frame):
         else:
             self.on_file_selected(path)
 
+    def _show_tree_context_menu(self, event: tk.Event) -> str:
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.tree.focus(item)
+        path = self._item_paths.get(item, self.root_dir or "")
+        menu = tk.Menu(
+            self, tearoff=0, bg=COLORS["menu_bg"], fg=COLORS["text_fg"],
+            activebackground=COLORS["menu_hover"], activeforeground="#ffffff",
+            relief="solid", bd=1, font=UI_FONT,
+        )
+        for label in ("New File", "New Folder", "Rename", "Delete"):
+            menu.add_command(label=label, command=lambda: None)
+        menu.add_separator()
+        menu.add_command(
+            label="Copy Path",
+            command=lambda p=path: (self.clipboard_clear(), self.clipboard_append(p)) if p else None,
+        )
+        menu.add_command(label="Reveal in File Explorer", command=lambda: None)
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
     def _collapse_all_items(self, item: str = "") -> None:
         for child in self.tree.get_children(item):
             self.tree.item(child, open=False)
@@ -1191,7 +1337,7 @@ class BreadcrumbBar(tk.Frame):
 # console with separate coloring for stdout / stderr / informational lines.
 # ============================================================================
 class ConsolePanel(tk.Frame):
-    def __init__(self, parent: tk.Misc, font: tuple) -> None:
+    def __init__(self, parent: tk.Misc, font: tuple, on_close: Optional[Callable] = None) -> None:
         super().__init__(parent, bg=COLORS["bg"])
         self._visible = True
 
@@ -1221,12 +1367,85 @@ class ConsolePanel(tk.Frame):
         self.output_tab.pack(side="left")
         self.output_tab.bind("<Button-1>", lambda _e: self._select_tab("output"))
 
-        clear_label = tk.Label(
-            header, text="Clear", bg=COLORS["sidebar_bg"], fg=COLORS["tab_inactive_fg"],
-            font=UI_FONT, cursor="hand2",
+        self.terminal_tab = tk.Label(
+            header, text=letter_spaced("TERMINAL"), bg=COLORS["sidebar_bg"],
+            fg=COLORS["tab_inactive_fg"], font=HEADER_FONT, cursor="hand2", padx=8,
         )
-        clear_label.pack(side="right", padx=10)
+        self.terminal_tab.pack(side="left")
+        self.terminal_tab.bind("<Button-1>", lambda _e: self._select_tab("terminal"))
+
+        self.debug_tab = tk.Label(
+            header, text=letter_spaced("DEBUG CONSOLE"), bg=COLORS["sidebar_bg"],
+            fg=COLORS["tab_inactive_fg"], font=HEADER_FONT, cursor="hand2", padx=8,
+        )
+        self.debug_tab.pack(side="left")
+        self.debug_tab.bind("<Button-1>", lambda _e: self._select_tab("debug"))
+
+        # Repack the two existing tabs into the reference order:
+        # PROBLEMS, OUTPUT, DEBUG CONSOLE, TERMINAL, PORTS.
+        self.terminal_tab.pack_forget()
+        self.debug_tab.pack_forget()
+        self.debug_tab.pack(side="left")
+        self.terminal_tab.pack(side="left")
+        self.ports_tab = tk.Label(
+            header, text=letter_spaced("PORTS"), bg=COLORS["sidebar_bg"],
+            fg=COLORS["tab_inactive_fg"], font=HEADER_FONT, cursor="hand2", padx=8,
+        )
+        self.ports_tab.pack(side="left")
+        self.ports_tab.bind("<Button-1>", lambda _e: self._select_tab("ports"))
+
+        terminal_session = tk.Label(
+            header, text="\u25b8  python  \u2304", bg=COLORS["hover_bg"], fg=COLORS["text_fg"],
+            font=SMALL_FONT, cursor="hand2", padx=8,
+        )
+        terminal_session.pack(side="right", padx=(4, 8), pady=3, fill="y")
+
+        clear_label = tk.Label(
+            header, text="\U0001f5d1", bg=COLORS["sidebar_bg"], fg=COLORS["tab_inactive_fg"],
+            font=(UI_FONT[0], 15), cursor="hand2", padx=6,
+        )
+        clear_label.pack(side="right")
         clear_label.bind("<Button-1>", lambda _e: self.clear())
+        clear_label.bind("<Enter>", lambda _e: clear_label.configure(fg=COLORS["text_fg"]))
+        clear_label.bind("<Leave>", lambda _e: clear_label.configure(fg=COLORS["tab_inactive_fg"]))
+
+        new_terminal = tk.Label(
+            header, text="+", bg=COLORS["sidebar_bg"], fg=COLORS["tab_inactive_fg"],
+            font=(UI_FONT[0], 16), cursor="hand2", padx=6,
+        )
+        new_terminal.pack(side="right")
+        new_terminal.bind("<Button-1>", lambda _e: self._select_tab("output"))
+        new_terminal.bind("<Enter>", lambda _e: new_terminal.configure(fg=COLORS["text_fg"]))
+        new_terminal.bind("<Leave>", lambda _e: new_terminal.configure(fg=COLORS["tab_inactive_fg"]))
+
+        terminal_session.pack_forget()
+        clear_label.pack_forget()
+        new_terminal.pack_forget()
+        controls = tk.Frame(header, bg=COLORS["sidebar_bg"])
+        controls.pack(side="right", fill="y", padx=(4, 7))
+        tk.Label(
+            controls, text=f"NexCore IDE  {ICONS['warning']}", bg=COLORS["sidebar_bg"],
+            fg=COLORS["text_fg"], font=SMALL_FONT, padx=7,
+        ).pack(side="left", fill="y")
+        control_specs = (
+            (ICONS["add"], lambda: self._select_tab("terminal")),
+            (ICONS["chevron_down"], lambda: None),
+            (ICONS["split"], lambda: None),
+            (ICONS["delete"], self.clear),
+            (ICONS["more"], lambda: None),
+            (ICONS["fullscreen"], lambda: None),
+            (ICONS["close"], on_close or (lambda: self.pack_forget())),
+        )
+        for glyph, command in control_specs:
+            label = tk.Label(
+                controls, text=glyph, bg=COLORS["sidebar_bg"],
+                fg=COLORS["tab_inactive_fg"], font=ICON_FONT,
+                padx=6, cursor="hand2",
+            )
+            label.pack(side="left", fill="y")
+            label.bind("<Button-1>", lambda _event, action=command: action())
+            label.bind("<Enter>", lambda _event, widget=label: widget.configure(fg=COLORS["text_fg"]))
+            label.bind("<Leave>", lambda _event, widget=label: widget.configure(fg=COLORS["tab_inactive_fg"]))
 
         self.body = tk.Frame(self, bg=COLORS["bg"])
         self.body.pack(fill="both", side="top")
@@ -1241,7 +1460,26 @@ class ConsolePanel(tk.Frame):
         self.text.tag_configure("stdout", foreground=COLORS["console_stdout"])
         self.text.tag_configure("stderr", foreground=COLORS["console_stderr"])
         self.text.tag_configure("info", foreground=COLORS["console_info"])
+        self.text.tag_configure("command", foreground="#dcdcaa")
+        self.text.tag_configure("success", foreground="#73c991")
+        self.text.tag_configure("failure", foreground=COLORS["problem_error"])
+        self.text.tag_configure("muted", foreground=COLORS["gutter_fg"], font=(font[0], max(9, font[1] - 2)))
+        self.text.tag_configure("cursor", foreground=COLORS["text_fg"], background=COLORS["text_fg"])
+        self._running = False
+        self._cursor_visible = False
+        self._cursor_job = None
         self.problems_frame = tk.Frame(self.body, bg=COLORS["console_bg"])
+        self.debug_frame = tk.Frame(self.body, bg=COLORS["console_bg"])
+        self.ports_frame = tk.Frame(self.body, bg=COLORS["console_bg"])
+        tk.Label(
+            self.debug_frame, text="Debug Console\nStart a debugging session to evaluate expressions.",
+            bg=COLORS["console_bg"], fg=COLORS["tab_inactive_fg"], font=font,
+            justify="left", anchor="nw",
+        ).pack(fill="both", expand=True, padx=12, pady=10)
+        tk.Label(
+            self.ports_frame, text="No forwarded ports",
+            bg=COLORS["console_bg"], fg=COLORS["tab_inactive_fg"], font=font,
+        ).pack(anchor="nw", padx=12, pady=10)
         mock_problems = (
             ("⚠", "constants.py:42", "unused import 'os'", COLORS["problem_warning"]),
             ("⚠", "gui_layout.py:76", "mock layout warning", COLORS["problem_warning"]),
@@ -1281,11 +1519,17 @@ class ConsolePanel(tk.Frame):
         self._active_tab = name
         if not self._visible:
             self.toggle()
+        self.output_frame.pack_forget()
+        self.problems_frame.pack_forget()
+        self.debug_frame.pack_forget()
+        self.ports_frame.pack_forget()
         if name == "problems":
-            self.output_frame.pack_forget()
             self.problems_frame.pack(fill="both", expand=True)
+        elif name == "debug":
+            self.debug_frame.pack(fill="both", expand=True)
+        elif name == "ports":
+            self.ports_frame.pack(fill="both", expand=True)
         else:
-            self.problems_frame.pack_forget()
             self.output_frame.pack(fill="both", expand=True)
         self.problems_tab.configure(
             fg=COLORS["text_fg"] if name == "problems" else COLORS["tab_inactive_fg"],
@@ -1293,14 +1537,70 @@ class ConsolePanel(tk.Frame):
         self.output_tab.configure(
             fg=COLORS["text_fg"] if name == "output" else COLORS["tab_inactive_fg"],
         )
+        self.terminal_tab.configure(
+            fg=COLORS["text_fg"] if name == "terminal" else COLORS["tab_inactive_fg"],
+        )
+        self.debug_tab.configure(
+            fg=COLORS["text_fg"] if name == "debug" else COLORS["tab_inactive_fg"],
+        )
+        self.ports_tab.configure(
+            fg=COLORS["text_fg"] if name == "ports" else COLORS["tab_inactive_fg"],
+        )
+        for tab_name, label in (
+            ("problems", self.problems_tab), ("output", self.output_tab),
+            ("debug", self.debug_tab), ("terminal", self.terminal_tab),
+            ("ports", self.ports_tab),
+        ):
+            label.configure(font=(
+                HEADER_FONT[0], HEADER_FONT[1], "bold underline" if name == tab_name else "bold",
+            ))
+
+    def select_output(self) -> None:
+        """Public Run-action hook: expand and reveal the active terminal."""
+        self._select_tab("terminal")
+
+    def set_running(self, running: bool) -> None:
+        self._running = running
+        self._remove_cursor()
+        if self._cursor_job is not None:
+            self.after_cancel(self._cursor_job)
+            self._cursor_job = None
+        if running:
+            self._blink_cursor()
+
+    def _blink_cursor(self) -> None:
+        if not self._running:
+            return
+        self._remove_cursor()
+        self._cursor_visible = not self._cursor_visible
+        if self._cursor_visible:
+            self.text.configure(state="normal")
+            self.text.insert("end", "\u2588", "cursor")
+            self.text.see("end")
+            self.text.configure(state="disabled")
+        self._cursor_job = self.after(520, self._blink_cursor)
+
+    def _remove_cursor(self) -> None:
+        self.text.configure(state="normal")
+        ranges = self.text.tag_ranges("cursor")
+        if ranges:
+            self.text.delete(ranges[0], ranges[-1])
+        self.text.configure(state="disabled")
 
     def append(self, text: str, kind: str = "stdout") -> None:
+        self._remove_cursor()
         self.text.configure(state="normal")
         self.text.insert("end", text, kind)
         self.text.see("end")
         self.text.configure(state="disabled")
+        if self._running and self._cursor_visible:
+            self.text.configure(state="normal")
+            self.text.insert("end", "\u2588", "cursor")
+            self.text.see("end")
+            self.text.configure(state="disabled")
 
     def clear(self) -> None:
+        self._remove_cursor()
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
         self.text.configure(state="disabled")
@@ -1310,7 +1610,7 @@ class ConsolePanel(tk.Frame):
 # Bottom-of-window VS Code-style blue status bar.
 # ============================================================================
 class StatusBar(tk.Frame):
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(self, parent: tk.Misc, on_problems: Optional[Callable] = None) -> None:
         super().__init__(parent, bg=COLORS["statusbar_bg"], height=24)
         self.pack_propagate(False)
 
@@ -1320,23 +1620,47 @@ class StatusBar(tk.Frame):
         file_section = tk.Frame(self, bg=COLORS["statusbar_bg"])
         file_section.pack(side="left", padx=10)
         tk.Label(
+            file_section, text=f"{ICONS['branch']}  main", bg=COLORS["statusbar_bg"],
+            fg=COLORS["statusbar_fg"], font=SMALL_FONT, cursor="hand2",
+        ).pack(side="left", padx=(0, 14))
+        tk.Label(
             file_section, text="\U0001F4C4", bg=COLORS["statusbar_bg"], fg=COLORS["statusbar_fg"],
             font=(SMALL_FONT[0], 10),
-        ).pack(side="left", padx=(0, 5))
+        )
         self.file_label = tk.Label(
             file_section, text="No file open", bg=COLORS["statusbar_bg"], fg=COLORS["statusbar_fg"],
             font=SMALL_FONT, anchor="w",
         )
-        self.file_label.pack(side="left")
+        # The requested compact layout starts with Problems; keep the
+        # file label API for transient callers without rendering it.
 
         self.problem_count = tk.Label(
             file_section, text="  2 ⚠   1 ✕", bg=COLORS["statusbar_bg"],
             fg=COLORS["statusbar_fg"], font=SMALL_FONT,
         )
-        self.problem_count.pack(side="left", padx=(10, 0))
+        self.problem_count.configure(text="\u2297 0   \u26a0 0", cursor="hand2")
+        problems_row = tk.Frame(file_section, bg=COLORS["statusbar_bg"], cursor="hand2")
+        problems_row.pack(side="left")
+        problem_widgets = (
+            tk.Label(problems_row, text=ICONS["error"], bg=COLORS["statusbar_bg"],
+                     fg=COLORS["problem_error"], font=ICON_FONT, cursor="hand2"),
+            tk.Label(problems_row, text=" 0   ", bg=COLORS["statusbar_bg"],
+                     fg=COLORS["statusbar_fg"], font=SMALL_FONT, cursor="hand2"),
+            tk.Label(problems_row, text=ICONS["warning"], bg=COLORS["statusbar_bg"],
+                     fg=COLORS["problem_warning"], font=ICON_FONT, cursor="hand2"),
+            tk.Label(problems_row, text=" 0", bg=COLORS["statusbar_bg"],
+                     fg=COLORS["statusbar_fg"], font=SMALL_FONT, cursor="hand2"),
+        )
+        for widget in problem_widgets:
+            widget.pack(side="left")
+        if on_problems:
+            problems_row.bind("<Button-1>", lambda _event: on_problems())
+            for widget in problem_widgets:
+                widget.bind("<Button-1>", lambda _event: on_problems())
 
         status_section = tk.Frame(self, bg=COLORS["statusbar_bg"])
-        status_section.pack(side="right", padx=10)
+        # Operational messages remain available through set_status(), but
+        # do not displace the deliberately exact Problems/metadata layout.
         self.status_label = tk.Label(
             status_section, text="", bg=COLORS["statusbar_bg"], fg=COLORS["statusbar_fg"], font=SMALL_FONT,
             anchor="e",
@@ -1347,12 +1671,18 @@ class StatusBar(tk.Frame):
             font=(SMALL_FONT[0], 10),
         ).pack(side="right", padx=(0, 5))
 
+        tk.Label(
+            self, text=ICONS["bell"], bg=COLORS["statusbar_bg"], fg=COLORS["statusbar_fg"],
+            font=ICON_FONT, padx=8, cursor="hand2",
+        ).pack(side="right")
         metadata = tk.Frame(self, bg=COLORS["statusbar_bg"])
         metadata.pack(side="right", padx=8)
         self.position_label = self._metadata_label(metadata, "Ln 1, Col 1")
-        self.language_label = self._metadata_label(metadata, "Plain Text")
+        self.tab_size_label = self._metadata_label(metadata, "Tab Size: 4")
         self.encoding_label = self._metadata_label(metadata, "UTF-8")
         self.line_ending_label = self._metadata_label(metadata, "LF")
+        self.language_label = self._metadata_label(metadata, "Plain Text")
+        self.go_live_label = self._metadata_label(metadata, "\u25c9  Go Live")
 
     @staticmethod
     def _metadata_label(parent: tk.Misc, text: str) -> tk.Label:
@@ -1596,6 +1926,7 @@ class AIPanel(tk.Frame):
         parent: tk.Misc,
         editor_font_family: str,
         get_context: Optional[Callable[[], Optional[Tuple[str, str]]]] = None,
+        on_close: Optional[Callable] = None,
     ) -> None:
         # Frozen requested size (same pattern as Sidebar in this file):
         # widgets packed inside later would otherwise inflate this
@@ -1607,6 +1938,7 @@ class AIPanel(tk.Frame):
         super().__init__(parent, bg=COLORS["sidebar_bg"], width=1, height=1)
         self.pack_propagate(False)
         self.get_context = get_context
+        self.on_close = on_close
         self._history: List[dict] = []
         self._response_queue: "queue.Queue[tuple]" = queue.Queue()
         self._busy = False
@@ -1632,18 +1964,26 @@ class AIPanel(tk.Frame):
 
     def _build_header(self) -> None:
         header = tk.Frame(self, bg=COLORS["sidebar_bg"])
-        header.pack(fill="x", padx=10, pady=(12, 8))
+        header.pack(fill="x", padx=14, pady=(11, 9))
         tk.Label(
-            header, text="✦", bg=COLORS["sidebar_bg"], fg=COLORS["link"], font=(UI_FONT[0], 12),
+            header, text=ICONS["sparkle"], bg=COLORS["sidebar_bg"], fg=COLORS["link"], font=ICON_FONT,
         ).pack(side="left", padx=(0, 6))
         tk.Label(
             header, text=letter_spaced("AI ASSISTANT"), bg=COLORS["sidebar_bg"], fg=COLORS["sidebar_header_fg"],
             font=HEADER_FONT,
         ).pack(side="left")
+        close = tk.Label(
+            header, text=ICONS["close"], bg=COLORS["sidebar_bg"], fg=COLORS["tab_inactive_fg"],
+            font=(ICON_FONT[0], 12), cursor="hand2", padx=4,
+        )
+        close.pack(side="right")
+        if self.on_close:
+            close.bind("<Button-1>", lambda _event: self.on_close())
         tk.Frame(self, bg=COLORS["border"], height=1).pack(fill="x")
 
     def _build_chat_area(self) -> None:
         chat_outer = tk.Frame(self, bg=COLORS["bg"])
+        self._chat_outer = chat_outer
         chat_outer.pack(fill="both", expand=True)
 
         self._chat_canvas = tk.Canvas(chat_outer, bg=COLORS["bg"], highlightthickness=0)
@@ -1662,19 +2002,19 @@ class AIPanel(tk.Frame):
 
     def _build_input_area(self) -> None:
         input_outer = tk.Frame(self, bg=COLORS["sidebar_bg"])
-        input_outer.pack(fill="x", padx=10, pady=(6, 12))
+        input_outer.pack(fill="x", padx=14, pady=(10, 14))
 
         # A rounded "capsule" drawn on a Canvas, with the real Text widget
         # and the send-icon Canvas embedded inside it via create_window -
         # the only way to get genuine rounded corners around interactive
         # widgets in Tkinter.
-        self._input_canvas = tk.Canvas(input_outer, bg=COLORS["sidebar_bg"], highlightthickness=0, height=72)
+        self._input_canvas = tk.Canvas(input_outer, bg=COLORS["sidebar_bg"], highlightthickness=0, height=82)
         self._input_canvas.pack(fill="x")
         self._input_rect_id: Optional[int] = None
 
         self.input_box = tk.Text(
             self._input_canvas, height=3, bg=COLORS["bg"], fg=COLORS["welcome_muted"], insertbackground="#ffffff",
-            bd=0, highlightthickness=0, font=(UI_FONT[0], 11), wrap="word", padx=8, pady=6,
+            bd=0, highlightthickness=0, font=(UI_FONT[0], 11), wrap="word", padx=10, pady=9,
         )
         self.input_box.insert("1.0", self.PLACEHOLDER_TEXT)
         self.input_box.bind("<FocusIn>", self._on_input_focus_in)
@@ -1686,7 +2026,7 @@ class AIPanel(tk.Frame):
             self._input_canvas, width=30, height=30, bg=COLORS["bg"], highlightthickness=0, cursor="arrow",
         )
         self._send_icon_id = self.send_button.create_text(
-            15, 15, text="➤", font=(UI_FONT[0], 13), fill=COLORS["icon_disabled_fg"],
+            15, 15, text=ICONS["send"], font=ICON_FONT, fill=COLORS["icon_disabled_fg"],
         )
         self.send_button.bind("<Button-1>", lambda _e: self.send_message())
 
@@ -1732,13 +2072,13 @@ class AIPanel(tk.Frame):
             canvas.delete(self._input_rect_id)
         border_color = COLORS["accent"] if self._input_focused else COLORS["border"]
         self._input_rect_id = self._draw_rounded_rect(
-            canvas, 1, 1, w - 1, h - 1, 12, fill=COLORS["bg"], outline=border_color, width=1.5,
+            canvas, 1, 1, w - 1, h - 1, 10, fill=COLORS["bg"], outline=border_color, width=1.5,
         )
         canvas.tag_lower(self._input_rect_id)
         send_w = 30
-        canvas.coords(self._input_window_id, 8, 6)
-        canvas.itemconfig(self._input_window_id, width=w - send_w - 20, height=h - 12)
-        canvas.coords(self._send_window_id, w - send_w - 8, (h - 30) // 2)
+        canvas.coords(self._input_window_id, 10, 7)
+        canvas.itemconfig(self._input_window_id, width=w - send_w - 24, height=h - 14)
+        canvas.coords(self._send_window_id, w - send_w - 9, (h - 30) // 2)
 
     def _on_input_focus_in(self, _event=None) -> None:
         self._input_focused = True
@@ -1933,7 +2273,7 @@ class AIPanel(tk.Frame):
         is_user = kind == "user"
 
         row = tk.Frame(self._chat_inner, bg=COLORS["bg"])
-        row.pack(fill="x", padx=8, pady=(6, 0))
+        row.pack(fill="x", padx=14, pady=(10, 0))
 
         col = tk.Frame(row, bg=COLORS["bg"])
         col.pack(side="right" if is_user else "left")
@@ -1963,11 +2303,13 @@ class AIPanel(tk.Frame):
         return row, bubble_canvas
 
     def _add_bubble(self, text: str, kind: str) -> None:
+        if hasattr(self, "_empty_state") and self._empty_state.winfo_exists():
+            self._empty_state.place_forget()
         bubble_bg = self._BUBBLE_BG[kind]
         text_fg = "#ffffff" if kind == "user" else COLORS["text_fg"]
 
         _row, canvas = self._start_bubble_row(kind)
-        padding = 10
+        padding = 13
         text_id = canvas.create_text(
             padding, padding, anchor="nw", text=text, fill=text_fg,
             font=(UI_FONT[0], AI_MESSAGE_FONT_SIZE), width=self.BUBBLE_MAX_WIDTH,
@@ -1978,14 +2320,24 @@ class AIPanel(tk.Frame):
         rect_w = (x2 - padding) + padding * 2
         rect_h = (y2 - padding) + padding * 2
         canvas.configure(width=rect_w, height=rect_h)
-        rect_id = self._draw_rounded_rect(canvas, 0, 0, rect_w, rect_h, 10, fill=bubble_bg, outline=bubble_bg)
+        rect_id = self._draw_rounded_rect(canvas, 0, 0, rect_w, rect_h, 11, fill=bubble_bg, outline=bubble_bg)
         canvas.tag_lower(rect_id, text_id)
         canvas.coords(text_id, padding, padding)
 
         self._scroll_chat_to_bottom()
 
     def _append_hint(self, text: str) -> None:
+        self._empty_state = tk.Frame(self._chat_outer, bg=COLORS["bg"])
+        self._empty_state.place(relx=.5, rely=.46, anchor="center")
         tk.Label(
-            self._chat_inner, text=text, bg=COLORS["bg"], fg=COLORS["welcome_muted"], font=(UI_FONT[0], 11),
-            wraplength=self.BUBBLE_MAX_WIDTH + 40, justify="left", anchor="w",
-        ).pack(fill="x", padx=10, pady=(10, 4), anchor="w")
+            self._empty_state, text=ICONS["chat"], bg=COLORS["bg"],
+            fg=COLORS["gutter_fg"], font=(ICON_FONT[0], 30),
+        ).pack(pady=(0, 13))
+        tk.Label(
+            self._empty_state, text="Start a conversation", bg=COLORS["bg"],
+            fg=COLORS["text_fg"], font=UI_FONT_BOLD,
+        ).pack(pady=(0, 7))
+        tk.Label(
+            self._empty_state, text=text, bg=COLORS["bg"], fg=COLORS["welcome_muted"],
+            font=(UI_FONT[0], 11), wraplength=self.BUBBLE_MAX_WIDTH + 30, justify="center",
+        ).pack()
