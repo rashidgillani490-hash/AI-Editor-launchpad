@@ -1421,7 +1421,7 @@ class ConsolePanel(tk.Frame):
         controls = tk.Frame(header, bg=COLORS["sidebar_bg"])
         controls.pack(side="right", fill="y", padx=(4, 7))
         tk.Label(
-            controls, text=f"NexCore IDE  {ICONS['warning']}", bg=COLORS["sidebar_bg"],
+            controls, text=f"NexCore  {ICONS['warning']}", bg=COLORS["sidebar_bg"],
             fg=COLORS["text_fg"], font=SMALL_FONT, padx=7,
         ).pack(side="left", fill="y")
         control_specs = (
@@ -1749,7 +1749,7 @@ class WelcomeScreen(tk.Frame):
 
         # -- Left column: title, tagline, Start actions, Recent ----------
         tk.Label(
-            left, text="NexCore IDE", bg=COLORS["bg"], fg="#f3f3f3",
+            left, text="NexCore", bg=COLORS["bg"], fg="#f3f3f3",
             font=(self.editor_font_family, WELCOME_TITLE_FONT_SIZE, "bold"), anchor="w",
         ).pack(anchor="w")
         tk.Label(
@@ -1792,7 +1792,7 @@ class WelcomeScreen(tk.Frame):
             lambda: self.on_not_implemented("Python Setup Guide"),
         )
         self._make_walkthrough_card(
-            right, "About NexCore IDE",
+            right, "About NexCore",
             "See what's powering this editor under the hood.",
             self.on_show_about,
         )
@@ -1903,7 +1903,7 @@ class AIPanel(tk.Frame):
     MODEL = "claude-opus-4-8"
     MAX_CONTEXT_CHARS = 8000  # Defensive cap on injected file content.
     SYSTEM_PROMPT = (
-        "You are the AI Assistant built into NexCore IDE, a desktop Python "
+        "You are the AI Assistant built into NexCore, a desktop Python "
         "code editor. Answer the user's question about their code clearly "
         "and concisely. When the currently open file's content is provided "
         "as context, ground your answer in it rather than guessing."

@@ -61,6 +61,12 @@ from terminal_manager import OutputLine, TerminalManager, TerminalState
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("blue")
+# Keep geometry()/minsize() values in screen pixels on Windows.  CTk's
+# automatic 125%/150% window scaling can otherwise turn the default
+# 1500x820 shell into a 1875x1025 borderless window, placing its bottom
+# edge (and status bar) outside the usable desktop.  Widget scaling stays
+# DPI-aware and readable.
+customtkinter.set_window_scaling(1.0)
 
 
 class NexCoreApp(customtkinter.CTk):
@@ -68,14 +74,44 @@ class NexCoreApp(customtkinter.CTk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("NexCore IDE")
-        self.geometry("1500x820")
+        # CTk multiplies top-level geometry by the monitor DPI factor.
+        # Normalize only that window factor so geometry/minsize remain
+        # literal screen pixels; fonts and child widgets retain their
+        # normal DPI-aware scaling.
+        detected_window_scale = self._get_window_scaling()
+        if detected_window_scale != 1.0:
+            customtkinter.set_window_scaling(1.0 / detected_window_scale)
+        self.title("NexCore")
+        self.minsize(1280, 800)
+        default_width, default_height = 1500, 820
+        default_x = max(0, (self.winfo_screenwidth() - default_width) // 2)
+        default_y = max(0, (self.winfo_screenheight() - default_height) // 2)
+        self._default_geometry = (
+            f"{default_width}x{default_height}+{default_x}+{default_y}"
+        )
+        self.geometry(self._default_geometry)
         # NexCore renders its own VS Code-style title bar.  Removing the
         # window-manager decoration prevents a second native title bar
         # from being stacked above it.
         self.overrideredirect(True)
         self.configure(fg_color=COLORS["bg"])
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # The root shell has six fixed-height chrome rows and one flexible
+        # content row.  Keeping them in a single grid prevents the bottom
+        # panel from consuming space reserved for the status bar.
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=0)  # Custom title bar.
+        self.grid_rowconfigure(1, weight=0)  # Menu bar.
+        self.grid_rowconfigure(2, weight=0)  # Run/stop toolbar.
+        self.grid_rowconfigure(3, weight=0)  # Top divider.
+        self.grid_rowconfigure(4, weight=1)  # Main content + bottom panel.
+        self.grid_rowconfigure(5, weight=0)  # Status divider.
+        self.grid_rowconfigure(6, weight=0)  # Status bar.
+        # Some sidebar/welcome children have large natural requested
+        # heights.  The top-level geometry must remain authoritative or
+        # those requests can silently grow the borderless window beyond
+        # the usable screen and push the status bar off-screen.
+        self.grid_propagate(False)
 
         self._configure_ttk_styles()
         self.editor_font_family = pick_monospace_font(self)
@@ -117,10 +153,14 @@ class NexCoreApp(customtkinter.CTk):
         self._build_titlebar()
         self._build_topbar()
         self._build_action_toolbar()
-        self._divider(self, "x")
+        tk.Frame(self, bg=COLORS["border"], height=1).grid(
+            row=3, column=0, sticky="ew",
+        )
         self.status_bar = StatusBar(self, on_problems=self._open_problems)
-        self.status_bar.pack(side="bottom", fill="x")
-        self._divider(self, "x", side="bottom")
+        self.status_bar.grid(row=6, column=0, sticky="ew")
+        tk.Frame(self, bg=COLORS["border"], height=1).grid(
+            row=5, column=0, sticky="ew",
+        )
 
         self._build_body()
 
@@ -140,11 +180,33 @@ class NexCoreApp(customtkinter.CTk):
 
         self.after(50, self._drain_output_queue)
         self.bind_all("<Control-Shift-P>", lambda _event: self._show_command_palette())
+        # Run after the native window has been mapped.  after_idle can fire
+        # while CTk is still applying its initial geometry, which may then
+        # overwrite an early maximize request.
+        self.after(10, self._maximize_on_launch)
+
+    def _maximize_on_launch(self) -> None:
+        if self._restore_geometry is None:
+            # Do not save self.geometry() here: during initial native-window
+            # creation CTk can temporarily report 600x500.  Restore must
+            # return to the intended centered default instead.
+            self._restore_geometry = self._default_geometry
+            self._apply_maximized_geometry()
+        # CTk/Windows may perform one more post-map geometry update.  Verify
+        # after that settles and reapply the explicit full-screen fallback
+        # if the borderless window was restored to its default size.
+        self.after(100, self._ensure_launch_maximized)
+
+    def _ensure_launch_maximized(self) -> None:
+        if not self._is_at_maximized_bounds():
+            if self._restore_geometry is None:
+                self._restore_geometry = self.geometry()
+            self._apply_maximized_geometry()
 
     def _build_titlebar(self) -> None:
         """Single borderless VS Code-style navigation and layout title row."""
-        bar = tk.Frame(self, bg=COLORS["activity_bar_bg"], height=34, cursor="arrow")
-        bar.pack(side="top", fill="x")
+        bar = tk.Frame(self, bg=COLORS["activity_bar_bg"], height=38, cursor="arrow")
+        bar.grid(row=0, column=0, sticky="ew")
         bar.pack_propagate(False)
         bar.grid_rowconfigure(0, weight=1)
         bar.grid_columnconfigure(1, weight=1)
@@ -168,7 +230,7 @@ class NexCoreApp(customtkinter.CTk):
         search.pack(side="left")
         search.pack_propagate(False)
         search_text = tk.Label(
-            search, text="NexCore IDE", bg=COLORS["topbar_bg"],
+            search, text="NexCore", bg=COLORS["topbar_bg"],
             fg=COLORS["tab_inactive_fg"], font=SMALL_FONT, cursor="xterm",
         )
         search_text.pack(side="left", fill="both", expand=True, padx=(12, 4))
@@ -198,7 +260,7 @@ class NexCoreApp(customtkinter.CTk):
         logo_shell.create_line(8, 19, 8, 8, 19, 19, 19, 8, fill="#ffffff", width=2.2)
 
         layout = tk.Frame(bar, bg=COLORS["activity_bar_bg"])
-        layout.grid(row=0, column=4, sticky="e", padx=(6, 4))
+        layout.grid(row=0, column=4, sticky="e", padx=(10, 8))
         layout_actions = (
             ("panel_left", self._view_toggle_explorer),
             ("panel_right", self._view_toggle_ai_panel),
@@ -208,7 +270,7 @@ class NexCoreApp(customtkinter.CTk):
         for name, action in layout_actions:
             button = tk.Label(
                 layout, text=ICONS[name], bg=COLORS["activity_bar_bg"],
-                fg=COLORS["tab_inactive_fg"], font=ICON_FONT, padx=6, cursor="hand2",
+                fg=COLORS["tab_inactive_fg"], font=ICON_FONT, padx=7, cursor="hand2",
             )
             button.pack(side="left", fill="y")
             button.bind("<Button-1>", lambda _event, command=action: command())
@@ -221,7 +283,7 @@ class NexCoreApp(customtkinter.CTk):
             widget.bind("<Double-Button-1>", lambda _event: self._toggle_maximized())
 
         controls = tk.Frame(bar, bg=COLORS["activity_bar_bg"])
-        controls.grid(row=0, column=5, sticky="e")
+        controls.grid(row=0, column=5, sticky="nse", padx=(4, 6))
         for text, command, hover in (
             (ICONS["minimize"], self._minimize_window, COLORS["hover_bg"]),
             (ICONS["maximize"], self._toggle_maximized, COLORS["hover_bg"]),
@@ -229,7 +291,7 @@ class NexCoreApp(customtkinter.CTk):
         ):
             button = tk.Label(
                 controls, text=text, bg=COLORS["activity_bar_bg"], fg=COLORS["text_fg"],
-                font=ICON_FONT, width=4, cursor="hand2",
+                font=ICON_FONT, width=4, padx=3, cursor="hand2",
             )
             button.pack(side="left", fill="y")
             button.bind("<Button-1>", lambda _event, action=command: action())
@@ -238,15 +300,68 @@ class NexCoreApp(customtkinter.CTk):
 
 
     def _toggle_maximized(self) -> None:
-        if self._restore_geometry is None:
-            self._restore_geometry = self.geometry()
-            width = self.winfo_screenwidth()
-            height = self.winfo_screenheight() - 1
-            self.geometry(f"{width}x{height}+0+0")
-        else:
+        # Base the toggle on the actual rendered bounds, not merely on
+        # whether a restore string exists.  This handles Windows/CTk
+        # changing geometry after startup without making the first click
+        # incorrectly behave like "restore".
+        if self._is_at_maximized_bounds() and self._restore_geometry is not None:
             geometry = self._restore_geometry
             self._restore_geometry = None
             self.geometry(geometry)
+        else:
+            self._restore_geometry = self.geometry()
+            self._apply_maximized_geometry()
+
+    def _monitor_work_area(self) -> Tuple[int, int, int, int]:
+        """Return the current monitor's taskbar-aware bounds.
+
+        A custom override-redirect title bar cannot reliably use
+        state("zoomed") on Windows, so query the same Win32 work area that
+        a native maximized window uses.  Tk screen metrics remain the
+        portable fallback.
+        """
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = (
+                        ("cbSize", wintypes.DWORD),
+                        ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD),
+                    )
+
+                user32 = ctypes.windll.user32
+                monitor = user32.MonitorFromWindow(self.winfo_id(), 2)
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(info)
+                if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                    work = info.rcWork
+                    return (
+                        work.left,
+                        work.top,
+                        work.right - work.left,
+                        work.bottom - work.top,
+                    )
+            except (AttributeError, OSError):
+                pass
+        return (0, 0, self.winfo_screenwidth(), self.winfo_screenheight())
+
+    def _apply_maximized_geometry(self) -> None:
+        x, y, width, height = self._monitor_work_area()
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _is_at_maximized_bounds(self) -> bool:
+        x, y, width, height = self._monitor_work_area()
+        tolerance = 2
+        return (
+            abs(self.winfo_x() - x) <= tolerance
+            and abs(self.winfo_y() - y) <= tolerance
+            and abs(self.winfo_width() - width) <= tolerance
+            and abs(self.winfo_height() - height) <= tolerance
+        )
 
     def _minimize_window(self) -> None:
         # Windows will not iconify a permanently override-redirect window.
@@ -316,7 +431,7 @@ class NexCoreApp(customtkinter.CTk):
         """
         body = tk.Frame(self, bg=COLORS["bg"])
         self.body = body
-        body.pack(side="top", fill="both", expand=True)
+        body.grid(row=4, column=0, sticky="nsew")
         # Keep the packed body at its allocated window size while columns
         # are added/removed; otherwise Tk briefly recomputes its requested
         # width from the intentionally tiny frozen pane requests.
@@ -477,7 +592,7 @@ class NexCoreApp(customtkinter.CTk):
     def _build_topbar(self) -> None:
         topbar = tk.Frame(self, bg=COLORS["topbar_bg"], height=30)
         topbar.pack_propagate(False)
-        topbar.pack(side="top", fill="x")
+        topbar.grid(row=1, column=0, sticky="ew")
 
         def make_menu() -> tk.Menu:
             return tk.Menu(
@@ -555,7 +670,7 @@ class NexCoreApp(customtkinter.CTk):
         run_menu.add_command(label=f"{ICONS['stop']}  Stop", command=self._stop_running, accelerator="Shift+F5")
 
         help_menu = make_menu()
-        help_menu.add_command(label="About NexCore IDE", command=self._show_about)
+        help_menu.add_command(label="About NexCore", command=self._show_about)
 
         self._add_menu_label(topbar, "File", file_menu)
         self._add_menu_label(topbar, "Edit", edit_menu)
@@ -575,7 +690,7 @@ class NexCoreApp(customtkinter.CTk):
         """
         toolbar = tk.Frame(self, bg=COLORS["action_toolbar_bg"], height=38)
         toolbar.pack_propagate(False)
-        toolbar.pack(side="top", fill="x")
+        toolbar.grid(row=2, column=0, sticky="ew")
 
         button_font = UI_FONT_BOLD
 
@@ -751,8 +866,8 @@ class NexCoreApp(customtkinter.CTk):
 
     def _show_about(self) -> None:
         messagebox.showinfo(
-            "About NexCore IDE",
-            "NexCore IDE\n\n"
+            "About NexCore",
+            "NexCore\n\n"
             "A CustomTkinter/Tkinter desktop IDE shell wired to\n"
             "TabsManager, RunManager, and TerminalManager, with an\n"
             "AI Assistant\n"
