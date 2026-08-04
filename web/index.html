@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07101f">
+  <title>NexCore IDE</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="cosmic-backdrop" aria-hidden="true"></div>
+  <div class="cosmic-overlay" aria-hidden="true"></div>
+
+  <div id="welcome-view" class="app-view active" aria-hidden="false">
+    <header class="welcome-topbar">
+      <div class="brand-mark" aria-label="NexCore">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M16 3 27 9.4v13.2L16 29 5 22.6V9.4Z"/>
+          <path d="m10 20 6-9 6 9M12.2 17h7.6"/>
+        </svg>
+      </div>
+      <nav class="app-menus" aria-label="Application menus">
+        <button class="menu-trigger" type="button" data-menu="file-menu">File</button>
+        <button id="edit-menu-button" class="menu-trigger" type="button" data-menu="edit-menu" aria-haspopup="menu" aria-expanded="false">Edit</button>
+        <button id="selection-menu-button" class="menu-trigger" type="button" data-menu="selection-menu" aria-haspopup="menu" aria-expanded="false">Selection</button>
+        <button id="view-menu-button" class="menu-trigger" type="button" data-menu="view-menu" aria-haspopup="menu" aria-expanded="false">View</button>
+        <button id="go-menu-button" class="menu-trigger" type="button" data-menu="go-menu" aria-haspopup="menu" aria-expanded="false">Go</button>
+        <button class="menu-trigger" type="button" data-menu="run-menu">Run</button>
+        <button class="menu-trigger" type="button" data-menu="terminal-menu">Terminal</button>
+        <button class="menu-trigger" type="button" data-action="show-about">Help</button>
+      </nav>
+      <div class="topbar-drag" aria-hidden="true"><span class="pywebview-drag-region"></span></div>
+      <div class="command-search-wrap">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+        <input id="command-search" type="text" placeholder="Search files, commands, or projects" autocomplete="off" aria-label="Command search" aria-expanded="false">
+        <kbd>Ctrl P</kbd>
+        <div id="command-results" class="command-results hidden" role="listbox"></div>
+      </div>
+      <div class="topbar-actions">
+        <button class="layout-button" type="button" data-action="enter-workspace" aria-label="Show orbital workspace" title="Orbital workspace">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M8 4v12"/></svg>
+        </button>
+        <button id="welcome-minimize" class="window-control" type="button" aria-label="Minimise"><svg viewBox="0 0 16 16"><path d="M3 8.5h10"/></svg></button>
+        <button id="welcome-maximize" class="window-control" type="button" aria-label="Maximise or restore"><svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
+        <button id="welcome-close" class="window-control close-control" type="button" aria-label="Close"><svg viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
+      </div>
+      <div id="file-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="new-file">New File <kbd>Ctrl N</kbd></button>
+        <button type="button" data-action="open-file">Open File <kbd>Ctrl O</kbd></button>
+        <button type="button" data-action="open-folder">Open Folder <kbd>Ctrl Shift O</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="save-file">Save <kbd>Ctrl S</kbd></button>
+        <button type="button" data-action="return-home">Return to Welcome</button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="exit-app">Exit</button>
+      </div>
+      <div id="edit-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="edit-undo">Undo <kbd>Ctrl Z</kbd></button>
+        <button type="button" data-action="edit-redo">Redo <kbd>Ctrl Y</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="edit-cut">Cut <kbd>Ctrl X</kbd></button>
+        <button type="button" data-action="edit-copy">Copy <kbd>Ctrl C</kbd></button>
+        <button type="button" data-action="edit-paste">Paste <kbd>Ctrl V</kbd></button>
+      </div>
+      <div id="selection-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="select-all">Select All <kbd>Ctrl A</kbd></button>
+        <button type="button" data-action="select-line">Select Current Line</button>
+      </div>
+      <div id="view-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="focus-search">Command Search <kbd>Ctrl P</kbd></button>
+        <button type="button" data-action="toggle-explorer">Toggle Explorer <kbd>Ctrl B</kbd></button>
+        <button type="button" data-action="toggle-terminal">Toggle Terminal <kbd>Ctrl J</kbd></button>
+        <button type="button" data-action="toggle-ai">Toggle AI Assistant</button>
+      </div>
+      <div id="go-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="return-home">Welcome Page</button>
+        <button type="button" data-action="enter-workspace">Workspace</button>
+        <button type="button" data-action="focus-editor">Active Editor</button>
+      </div>
+      <div id="run-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="run-file">Run Active File <kbd>F5</kbd></button>
+        <button type="button" data-action="stop-run">Stop Execution <kbd>Shift F5</kbd></button>
+      </div>
+      <div id="terminal-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="show-terminal">Show Terminal</button>
+        <button type="button" data-action="clear-terminal">Clear Terminal</button>
+      </div>
+    </header>
+
+    <aside class="activity-rail" aria-label="Welcome activities">
+      <button class="activity-button active" type="button" data-action="home" aria-label="Home" title="Home">
+        <svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-6v-6h-4v6H4Z"/></svg>
+      </button>
+      <button class="activity-button" type="button" data-action="open-folder" aria-label="Explorer" title="Open folder">
+        <svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3Z"/></svg>
+      </button>
+      <button class="activity-button" type="button" data-action="focus-search" aria-label="Search" title="Search commands">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+      </button>
+      <button class="activity-button" type="button" data-action="run-file" aria-label="Run" title="Run active file">
+        <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></svg>
+      </button>
+      <button class="activity-button" type="button" data-action="python-development" aria-label="Python" title="Python development">
+        <svg viewBox="0 0 24 24"><path d="M12 3c-4 0-4 2-4 2v3h5v2H6s-3 0-3 4 3 4 3 4h2v-3s0-3 3-3h3s2 0 2-2V6s0-3-4-3Z"/><path d="M12 21c4 0 4-2 4-2v-3h-5v-2h7s3 0 3-4-3-4-3-4h-2v3s0 3-3 3h-3s-2 0-2 2v4s0 3 4 3Z"/></svg>
+      </button>
+      <button class="activity-button settings-activity" type="button" data-action="toggle-settings" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A8 8 0 0 0 15 6l-.3-2.6h-4L10.4 6A8 8 0 0 0 8 7.1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1A8 8 0 0 0 10.4 18l.3 2.6h4L15 18a8 8 0 0 0 1.5-1.1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg>
+      </button>
+    </aside>
+
+    <main class="welcome-main">
+      <section class="welcome-left">
+        <div class="welcome-heading">
+          <div class="eyebrow"><span></span>NEXCORE ORBITAL ENGINE</div>
+          <h1>NexCore <span>IDE</span></h1>
+          <p class="welcome-tagline">Code beyond the ordinary.</p>
+          <p class="welcome-copy">A futuristic Python development environment built for focused creation.</p>
+        </div>
+
+        <section class="start-section" aria-labelledby="start-title">
+          <h2 id="start-title">Start</h2>
+          <div class="start-actions">
+            <button type="button" data-action="new-file"><span class="action-icon"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z"/><path d="M12 11v6m-3-3h6"/></svg></span><span>New File</span></button>
+            <button type="button" data-action="open-file"><span class="action-icon"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5Z"/><path d="M9 13h6m-3-3v6"/></svg></span><span>Open File</span></button>
+            <button type="button" data-action="open-folder"><span class="action-icon gold"><svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3Z"/></svg></span><span>Open Folder</span></button>
+            <button type="button" data-action="open-recent"><span class="action-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span><span>Open Recent Project</span></button>
+            <button type="button" data-action="enter-workspace"><span class="action-icon orbital"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-18 12 12)"/><circle cx="12" cy="12" r="2"/></svg></span><span>Enter Orbital Workspace</span></button>
+          </div>
+        </section>
+
+        <section id="recent-section" class="recent-section" aria-labelledby="recent-title">
+          <div class="section-heading"><h2 id="recent-title">Recent</h2><span id="recent-count">0 items</span></div>
+          <div id="recent-list" class="recent-list"><p class="empty-recents">Projects and files you open will appear here.</p></div>
+        </section>
+      </section>
+
+      <section class="explore-section" aria-labelledby="explore-title">
+        <div class="section-heading"><h2 id="explore-title">Explore NexCore</h2><span>CORE SYSTEMS</span></div>
+        <div class="explore-cards">
+          <button class="explore-card featured" type="button" data-action="enter-workspace">
+            <span class="card-icon orbital"><svg viewBox="0 0 28 28"><ellipse cx="14" cy="14" rx="11" ry="4.5" transform="rotate(-18 14 14)"/><circle cx="14" cy="14" r="2.5"/></svg></span>
+            <span><strong>Enter the Orbital Workspace</strong><small>Open the futuristic coding interface and begin building.</small></span><i>01</i>
+          </button>
+          <button class="explore-card" type="button" data-action="python-development">
+            <span class="card-icon"><svg viewBox="0 0 28 28"><path d="M14 4c-5 0-5 2.5-5 2.5V11h6v2H7s-3 0-3 4 3 4 3 4h3"/><path d="M14 24c5 0 5-2.5 5-2.5V17h-6v-2h8s3 0 3-4-3-4-3-4h-3"/></svg></span>
+            <span><strong>Python Development</strong><small>Create, edit, save and execute Python files directly.</small></span><i>02</i>
+          </button>
+          <button class="explore-card" type="button" data-action="show-terminal">
+            <span class="card-icon"><svg viewBox="0 0 28 28"><rect x="3" y="5" width="22" height="18" rx="3"/><path d="m8 11 4 3-4 3m7 0h5"/></svg></span>
+            <span><strong>Smart Terminal</strong><small>View live program output, errors and execution status.</small></span><i>03</i>
+          </button>
+          <button class="explore-card" type="button" data-action="show-explorer">
+            <span class="card-icon gold"><svg viewBox="0 0 28 28"><path d="M3 7h9l2 3h11v13H3Z"/></svg></span>
+            <span><strong>Project Navigation</strong><small>Explore project files through the orbital navigation system.</small></span><i>04</i>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <aside id="settings-panel" class="settings-panel glass-panel hidden" aria-label="Settings">
+      <header><strong>Welcome Settings</strong><button type="button" data-action="toggle-settings" aria-label="Close settings">×</button></header>
+      <label><span>Reduce ambient motion</span><input id="reduce-motion-setting" type="checkbox"></label>
+      <p>Workspace preferences stay local to this NexCore installation.</p>
+    </aside>
+
+    <aside id="about-panel" class="settings-panel about-panel glass-panel hidden" aria-label="About NexCore">
+      <header><strong>About NexCore</strong><button type="button" data-action="show-about" aria-label="Close about">×</button></header>
+      <p>NexCore combines a native Python engine with a focused orbital coding workspace.</p>
+      <small id="about-version">Version 0.1.0</small>
+    </aside>
+
+    <div id="engine-indicator" class="engine-indicator connecting" role="status">
+      <span></span><strong id="engine-indicator-text">Connecting to NexCore Engine…</strong>
+    </div>
+
+    <footer class="welcome-statusbar">
+      <div><span id="status-backend"><i></i> Connecting</span><span id="status-ready">Initialising</span><span id="status-project">No project open</span><span>0 errors · 0 warnings</span></div>
+      <div><span id="status-python">Python —</span><span id="status-platform">Desktop</span><span>NexCore Orbital Engine</span></div>
+    </footer>
+  </div>
+
+  <div id="workspace-view" class="app-view orbital-view hidden" aria-hidden="true" inert>
+    <header class="workspace-topbar" aria-label="Code Editor navigation">
+      <div class="workspace-topbar-left">
+        <button class="workspace-logo brand-mark" type="button" data-action="return-home" aria-label="Return to Welcome" data-tooltip="Home">
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M16 3 27 9.4v13.2L16 29 5 22.6V9.4Z"/>
+            <path d="m10 20 6-9 6 9M12.2 17h7.6"/>
+          </svg>
+        </button>
+        <nav class="app-menus workspace-menus" aria-label="Workspace menus">
+          <button class="menu-trigger" type="button" data-menu="workspace-file-menu" aria-haspopup="menu" aria-expanded="false">File</button>
+          <button class="menu-trigger" type="button" data-menu="workspace-edit-menu" aria-haspopup="menu" aria-expanded="false">Edit</button>
+          <button class="menu-trigger workspace-menu-secondary" type="button" data-menu="workspace-selection-menu" aria-haspopup="menu" aria-expanded="false">Selection</button>
+          <button class="menu-trigger" type="button" data-menu="workspace-view-menu" aria-haspopup="menu" aria-expanded="false">View</button>
+          <button class="menu-trigger workspace-menu-secondary" type="button" data-menu="workspace-go-menu" aria-haspopup="menu" aria-expanded="false">Go</button>
+          <button class="menu-trigger" type="button" data-menu="workspace-run-menu" aria-haspopup="menu" aria-expanded="false">Run</button>
+          <button class="menu-trigger" type="button" data-menu="workspace-terminal-menu" aria-haspopup="menu" aria-expanded="false">Terminal</button>
+          <button class="menu-trigger workspace-menu-secondary" type="button" data-menu="workspace-help-menu" aria-haspopup="menu" aria-expanded="false">Help</button>
+        </nav>
+      </div>
+      <div class="topbar-drag" aria-hidden="true"><span class="pywebview-drag-region"></span></div>
+      <div class="workspace-topbar-center">
+        <div class="command-search-wrap workspace-command-search-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+          <input id="workspace-command-search" type="text" placeholder="Search files, commands, or projects" autocomplete="off" aria-label="Search files, commands, or projects" aria-expanded="false" aria-controls="workspace-command-results">
+          <kbd>Ctrl P</kbd>
+          <div id="workspace-command-results" class="command-results hidden" role="listbox"></div>
+        </div>
+      </div>
+      <div class="topbar-actions workspace-topbar-right">
+        <button class="layout-button" type="button" data-action="toggle-explorer" aria-label="Toggle orbital navigation" title="Toggle orbital navigation">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M8 4v12"/></svg>
+        </button>
+        <button id="workspace-minimize" class="window-control" type="button" aria-label="Minimise"><svg viewBox="0 0 16 16"><path d="M3 8.5h10"/></svg></button>
+        <button id="workspace-maximize" class="window-control" type="button" aria-label="Maximise or restore"><svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
+        <button id="workspace-close" class="window-control close-control" type="button" aria-label="Close"><svg viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
+      </div>
+
+      <div id="workspace-file-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="new-file">New File <kbd>Ctrl N</kbd></button>
+        <button type="button" data-action="new-folder" data-requires="folder">New Folder</button>
+        <button type="button" data-action="open-file">Open File <kbd>Ctrl O</kbd></button>
+        <button type="button" data-action="open-folder">Open Folder <kbd>Ctrl Shift O</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="save-file" data-requires="file">Save <kbd>Ctrl S</kbd></button>
+        <button type="button" data-action="save-as" data-requires="file">Save As <kbd>Ctrl Shift S</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="return-home">Return to Welcome</button>
+        <button type="button" data-action="exit-app">Exit</button>
+      </div>
+      <div id="workspace-edit-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="edit-undo" data-requires="file">Undo <kbd>Ctrl Z</kbd></button>
+        <button type="button" data-action="edit-redo" data-requires="file">Redo <kbd>Ctrl Y</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="edit-cut" data-requires="file">Cut <kbd>Ctrl X</kbd></button>
+        <button type="button" data-action="edit-copy" data-requires="file">Copy <kbd>Ctrl C</kbd></button>
+        <button type="button" data-action="edit-paste" data-requires="file">Paste <kbd>Ctrl V</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="editor-find" data-requires="file">Find <kbd>Ctrl F</kbd></button>
+        <button type="button" data-action="editor-replace" data-requires="file">Replace <kbd>Ctrl H</kbd></button>
+        <button type="button" data-action="select-all" data-requires="file">Select All <kbd>Ctrl A</kbd></button>
+      </div>
+      <div id="workspace-selection-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="select-all" data-requires="file">Select All</button>
+        <button type="button" data-action="select-line" data-requires="file">Select Current Line</button>
+        <button type="button" data-action="move-line-up" data-requires="file">Move Line Up</button>
+        <button type="button" data-action="move-line-down" data-requires="file">Move Line Down</button>
+        <button type="button" data-action="copy-line-up" data-requires="file">Copy Line Up</button>
+        <button type="button" data-action="copy-line-down" data-requires="file">Copy Line Down</button>
+      </div>
+      <div id="workspace-view-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="search-project" data-requires="folder">Search Project <kbd>Ctrl Shift F</kbd></button>
+        <button type="button" data-action="open-settings">Settings <kbd>Ctrl ,</kbd></button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="toggle-explorer">Toggle Orbital Navigation <kbd>Ctrl B</kbd></button>
+        <button type="button" data-action="toggle-terminal">Toggle Terminal <kbd>Ctrl J</kbd></button>
+        <button type="button" data-action="toggle-ai">Toggle AI Assistant</button>
+        <button type="button" data-action="toggle-statusbar">Toggle Status Bar</button>
+        <button type="button" data-action="toggle-minimap" disabled aria-disabled="true" title="The orbital editor does not include a minimap">Toggle Minimap</button>
+        <span class="menu-separator"></span>
+        <button type="button" data-action="zoom-in">Zoom In</button>
+        <button type="button" data-action="zoom-out">Zoom Out</button>
+        <button type="button" data-action="zoom-reset">Reset Zoom</button>
+        <button type="button" data-action="return-home">Return to Welcome</button>
+      </div>
+      <div id="workspace-go-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="focus-search">Go to File <kbd>Ctrl P</kbd></button>
+        <button type="button" data-action="go-line" data-requires="file">Go to Line</button>
+        <button type="button" data-action="go-back" data-requires="history">Go Back</button>
+        <button type="button" data-action="go-forward" disabled aria-disabled="true" title="Forward history is unavailable">Go Forward</button>
+        <button type="button" data-action="go-parent" data-requires="folder">Go to Parent Folder</button>
+        <button type="button" data-action="project-root" data-requires="folder">Project Root</button>
+        <button type="button" data-action="next-file" data-requires="tabs">Next Open File</button>
+        <button type="button" data-action="previous-file" data-requires="tabs">Previous Open File</button>
+      </div>
+      <div id="workspace-run-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="run-file" data-requires="runnable">Run Active File <kbd>F5</kbd></button>
+        <button type="button" data-action="stop-run" data-requires="running">Stop Execution <kbd>Shift F5</kbd></button>
+      </div>
+      <div id="workspace-terminal-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="show-terminal">Show Terminal</button>
+        <button type="button" data-action="clear-terminal">Clear Terminal</button>
+        <button type="button" data-action="focus-terminal">Focus Terminal</button>
+      </div>
+      <div id="workspace-help-menu" class="glass-menu hidden" role="menu">
+        <button type="button" data-action="show-about">About NexCore</button>
+        <button type="button" data-action="show-shortcuts">Keyboard Shortcuts</button>
+      </div>
+    </header>
+
+    <button id="workspace-home" class="orbital-home" type="button" data-action="return-home" aria-label="Return to welcome">
+      <svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-6v-6h-4v6H4Z"/></svg><span>Home</span>
+    </button>
+
+    <div class="orbital-window-controls">
+      <button id="minimize" class="window-control" type="button" aria-label="Minimise"><svg viewBox="0 0 16 16"><path d="M3 8.5h10"/></svg></button>
+      <button id="maximize" class="window-control" type="button" aria-label="Maximise or restore"><svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg></button>
+      <button id="close" class="window-control close-control" type="button" aria-label="Close"><svg viewBox="0 0 16 16"><path d="m4 4 8 8m0-8-8 8"/></svg></button>
+    </div>
+    <button id="ai-toggle" class="orbital-ai-toggle" type="button" aria-controls="ai-drawer" aria-expanded="false" data-tooltip="AI Assistant">
+      <svg viewBox="0 0 24 24"><path d="M12 3 13.8 8.2 19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="m18 16 .8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8Z"/></svg>
+      <span>AI Assistant</span>
+    </button>
+
+    <aside id="orbital-navigation" class="orbital-navigation" tabindex="0" aria-label="Orbital project navigation">
+      <button id="project-root-node" class="project-orbit-node" type="button" title="Open project folder">
+        <span class="orbit-icon folder"><svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3Z"/></svg></span>
+        <strong id="orbital-project-name">Folders</strong>
+      </button>
+      <div class="orbital-file-toolbar" role="toolbar" aria-label="File management">
+        <button class="orbital-file-action" type="button" data-file-action="new-file" data-tooltip="New File" aria-label="New File"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z"/><path d="M12 11v6m-3-3h6"/></svg></button>
+        <button class="orbital-file-action" type="button" data-file-action="new-folder" data-tooltip="New Folder" aria-label="New Folder"><svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3Z"/><path d="M12 11v6m-3-3h6"/></svg></button>
+        <button class="orbital-file-action" type="button" data-file-action="open-file" data-tooltip="Open File" aria-label="Open File"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6Z"/><path d="m10 14 2 2 4-5"/></svg></button>
+        <button class="orbital-file-action" type="button" data-file-action="open-folder" data-tooltip="Open Folder" aria-label="Open Folder"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9l-2 10H5Z"/><path d="m12 12 2 2 3-4"/></svg></button>
+        <button class="orbital-file-action" type="button" data-file-action="refresh" data-tooltip="Refresh Folder" aria-label="Refresh Folder"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M18 17a8 8 0 1 1 1-9l1 4"/></svg></button>
+        <button class="orbital-file-action" type="button" data-file-action="root" data-tooltip="Return to Project Root" aria-label="Return to Project Root"><svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-6v-6h-4v6H4Z"/></svg></button>
+        <button class="orbital-file-action" type="button" data-file-action="filter" data-tooltip="Filter Files" aria-label="Filter Files" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10m-7 6h4"/></svg></button>
+      </div>
+      <div id="orbital-filter" class="orbital-filter hidden">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+        <input id="orbital-filter-input" type="text" placeholder="Filter files…" aria-label="Filter current folder files" autocomplete="off">
+        <button id="orbital-filter-clear" type="button" aria-label="Clear file filter" data-tooltip="Clear Filter">×</button>
+      </div>
+      <button id="orbit-parent" class="orbit-parent hidden" type="button" aria-label="Return to parent folder">
+        <svg viewBox="0 0 20 20"><path d="m12 5-5 5 5 5"/></svg><span id="orbit-breadcrumb">Project root</span>
+      </button>
+      <div id="orbital-list" class="orbital-list" role="listbox" aria-label="Project files"></div>
+    </aside>
+
+    <section class="orbital-editor-panel" aria-label="Code editor">
+      <header class="orbital-editor-header">
+        <button id="active-file-button" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span id="active-file-icon" class="mini-file-icon file"></span>
+          <strong id="active-file-name">No file open</strong>
+          <small id="active-file-path"></small>
+          <i id="active-file-modified"></i>
+          <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg>
+        </button>
+        <button id="active-file-close" type="button" aria-label="Close active file" data-tooltip="Close File">×</button>
+        <span id="editor-save-state">Ready</span>
+        <div class="editor-quick-actions">
+          <button type="button" data-action="save-file" aria-label="Save">Save</button>
+          <button id="run-file" type="button" aria-label="Run active file">Run</button>
+        </div>
+      </header>
+      <div id="open-files-menu" class="open-files-menu hidden" role="menu"></div>
+      <div id="editor-findbar" class="editor-findbar hidden" role="search">
+        <input id="editor-find-input" type="text" placeholder="Find" aria-label="Find text">
+        <span id="editor-find-count">0/0</span>
+        <button id="editor-find-case" type="button" aria-pressed="false" aria-label="Match case">Aa</button>
+        <button type="button" data-find-action="previous" aria-label="Previous match">↑</button>
+        <button type="button" data-find-action="next" aria-label="Next match">↓</button>
+        <div id="editor-replace-row" class="editor-replace-row hidden">
+          <input id="editor-replace-input" type="text" placeholder="Replace" aria-label="Replacement text">
+          <button type="button" data-find-action="replace" aria-label="Replace current match">Replace</button>
+          <button type="button" data-find-action="replace-all" aria-label="Replace all matches">All</button>
+        </div>
+        <button type="button" data-find-action="close" aria-label="Close find">×</button>
+      </div>
+      <nav id="breadcrumbs" class="orbital-breadcrumbs" aria-label="Current folder"><span>No file open</span></nav>
+      <div class="editor-surface">
+        <pre id="line-numbers" class="line-numbers" aria-hidden="true">1</pre>
+        <div id="editor-stack" class="editor-stack">
+          <pre id="highlight-layer" class="editor-layer" aria-hidden="true"><code id="highlight-code"></code></pre>
+          <textarea id="editor" class="editor-input" aria-label="Code editor" autocomplete="off" autocapitalize="off" spellcheck="false" wrap="off"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <div id="terminal-splitter" class="terminal-splitter" role="separator" aria-label="Resize editor and terminal" aria-orientation="horizontal" tabindex="0"></div>
+    <section id="terminal-panel" class="orbital-terminal-panel" aria-label="Output terminal">
+      <header>
+        <strong>Output - Terminal</strong>
+        <div><span id="run-status" class="run-status">Ready</span><button id="terminal-copy" type="button" aria-label="Copy terminal output">Copy</button><button id="terminal-expand" type="button" aria-label="Expand or collapse terminal">Expand</button><button id="stop-run" type="button" aria-label="Stop execution">Stop</button><button id="clear-terminal" type="button" aria-label="Clear terminal">Clear</button></div>
+      </header>
+      <nav class="orbital-terminal-tabs" aria-label="Terminal views">
+        <button class="active" type="button" data-orbital-terminal-tab="terminal">Terminal</button>
+        <button type="button" data-orbital-terminal-tab="output">Output</button>
+        <button type="button" data-orbital-terminal-tab="problems">Problems <span id="problems-tab-count">0</span></button>
+      </nav>
+      <div id="terminal-output" class="terminal-output" role="log" aria-live="polite"></div>
+      <div id="problems-panel" class="problems-panel hidden" role="list" aria-label="Problems"></div>
+      <form id="command-form" class="command-row" autocomplete="off"><label for="command-input" id="terminal-prompt">D:\Ide&gt;</label><input id="command-input" type="text" placeholder="Type command..." aria-label="Safe application command"></form>
+    </section>
+
+    <aside id="ai-drawer" class="orbital-ai-drawer" aria-hidden="true" aria-label="NexCore AI Assistant">
+      <header>
+        <div><span class="ai-drawer-logo"><svg viewBox="0 0 24 24"><path d="M12 3 13.8 8.2 19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/></svg></span><div><strong>NexCore AI</strong><small id="ai-engine-pill"><i></i> Checking configuration</small></div></div>
+        <div><button id="ai-new-chat" type="button" aria-label="New conversation">＋</button><button id="ai-close" type="button" aria-label="Close AI Assistant">×</button></div>
+      </header>
+      <section class="ai-drawer-intro"><h2 id="ai-greeting">Hello</h2><p>How can I help you build today?</p></section>
+      <div class="ai-quick-actions">
+        <button type="button" data-ai-action="explain"><strong>Explain this code</strong><small>Understand selected or active code.</small></button>
+        <button type="button" data-ai-action="generate"><strong>Generate code</strong><small>Draft code from a prompt.</small></button>
+        <button type="button" data-ai-action="refactor"><strong>Refactor this file</strong><small>Suggest structural improvements.</small></button>
+        <button type="button" data-ai-action="bugs"><strong>Find bugs</strong><small>Review active code for issues.</small></button>
+        <button type="button" data-ai-action="comments"><strong>Add comments</strong><small>Propose helpful documentation.</small></button>
+      </div>
+      <div id="ai-conversation" class="ai-conversation" role="log" aria-live="polite">
+        <div class="ai-config-message">NexCore AI is checking its backend configuration.</div>
+      </div>
+      <form id="ai-composer" class="ai-drawer-composer">
+        <textarea id="ai-input" placeholder="Ask anything about your code..." aria-label="AI message"></textarea>
+        <div class="ai-context-controls">
+          <label><input id="ai-file-context" type="checkbox"> Active file</label>
+          <label><input id="ai-selection-context" type="checkbox"> Selection</label>
+          <label><input id="ai-terminal-context" type="checkbox"> Terminal error</label>
+          <label><input id="ai-project-context" type="checkbox"> Project structure</label>
+          <label><input id="ai-problems-context" type="checkbox"> Problems</label>
+          <label><input id="ai-git-context" type="checkbox"> Git diff</label>
+          <span><button type="button" id="ai-attach" aria-label="Attach active file">⌁</button><button type="submit" id="ai-send" aria-label="Send message">➤</button></span>
+        </div>
+      </form>
+    </aside>
+
+    <section id="project-search-panel" class="project-search-modal hidden" role="dialog" aria-modal="false" aria-hidden="true" aria-labelledby="project-search-title">
+      <header><strong id="project-search-title">Search Project</strong><span id="project-search-status" role="status">Type a term to search this project.</span><button id="project-search-close" type="button" aria-label="Close project search">×</button></header>
+      <div class="project-search-query-row">
+        <input id="project-search-query" type="text" placeholder="Search across project files…" aria-label="Project search query">
+        <button id="project-search-run" class="primary" type="button">Search</button>
+      </div>
+      <div class="project-search-options-row">
+        <div class="project-search-toggles">
+        <button id="project-search-case" type="button" aria-pressed="false" title="Match case">Aa</button>
+        <button id="project-search-word" type="button" aria-pressed="false" title="Whole word">W</button>
+        <button id="project-search-regex" type="button" aria-pressed="false" title="Regular expression">.*</button>
+        </div>
+        <button id="project-replace-toggle" class="project-search-link" type="button">Show Replace</button>
+        <button id="project-search-filters-toggle" class="project-search-link" type="button" aria-expanded="false">Filters</button>
+        <button id="project-search-clear" type="button">Clear</button>
+      </div>
+      <input id="project-search-replace" class="hidden" type="text" placeholder="Safe project replacement is unavailable" aria-label="Project replacement unavailable" disabled>
+      <div id="project-search-filters" class="project-search-filters hidden">
+        <input id="project-search-include" type="text" placeholder="Include files: *.py, *.js" aria-label="Include file patterns">
+        <input id="project-search-exclude" type="text" placeholder="Exclude files: node_modules, .git, __pycache__" aria-label="Exclude file patterns">
+      </div>
+      <div class="project-search-navigation"><span></span><button id="project-search-previous" type="button" aria-label="Previous search result">↑</button><button id="project-search-next" type="button" aria-label="Next search result">↓</button></div>
+      <div id="project-search-results" class="project-search-results" role="tree"><p class="project-search-empty">Type a term to search this project.</p></div>
+    </section>
+
+    <footer id="workspace-statusbar" class="workspace-statusbar" aria-label="Workspace status">
+      <div class="workspace-status-left">
+        <span id="workspace-engine" class="connecting"><i></i> Connecting</span>
+        <span id="workspace-app-status">Initialising</span>
+        <span id="workspace-project" title="No project open">No project open</span>
+        <span id="workspace-problems">0 errors · 0 warnings</span>
+      </div>
+      <div class="workspace-status-right">
+        <span id="status-python-workspace">Python —</span>
+        <span id="status-platform-workspace">Desktop</span>
+        <span id="workspace-file-metadata" class="hidden"></span>
+        <span id="status-app-workspace">NexCore Orbital Engine</span>
+      </div>
+    </footer>
+  </div>
+
+  <div id="creation-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="creation-title">
+    <form id="creation-form" class="nexcore-modal creation-modal">
+      <h2 id="creation-title">Create New File</h2>
+      <p>Location: <strong id="creation-location">Project root</strong></p>
+      <label for="creation-name" id="creation-label">Filename</label>
+      <input id="creation-name" type="text" placeholder="example.py" autocomplete="off">
+      <small id="creation-error" role="alert"></small>
+      <div><button type="button" data-creation-action="cancel">Cancel</button><button type="submit" class="primary">Create</button></div>
+    </form>
+  </div>
+
+  <div id="unsaved-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="unsaved-title">
+    <div class="nexcore-modal glass-panel">
+      <span class="modal-orbit" aria-hidden="true"></span>
+      <h2 id="unsaved-title">You have unsaved changes.</h2>
+      <p id="unsaved-message">Save your changes before continuing?</p>
+      <div>
+        <button id="unsaved-save" type="button" class="primary" data-modal-action="save">Save</button>
+        <button id="unsaved-discard" type="button" data-modal-action="discard">Don’t Save</button>
+        <button type="button" data-modal-action="cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="recovery-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
+    <div class="nexcore-modal recovery-modal">
+      <h2 id="recovery-title">Recovered unsaved work was found.</h2>
+      <div id="recovery-list"></div>
+      <pre id="recovery-preview" class="hidden"></pre>
+      <div><button type="button" data-recovery-action="restore-all" class="primary">Restore All</button><button type="button" data-recovery-action="discard-all">Discard All</button><button type="button" data-recovery-action="later">Later</button></div>
+    </div>
+  </div>
+
+  <div id="workspace-restore-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="workspace-restore-title">
+    <div class="nexcore-modal">
+      <h2 id="workspace-restore-title">Restore your previous NexCore workspace?</h2>
+      <p>Available projects and files will be validated before they are reopened.</p>
+      <div><button type="button" class="primary" data-workspace-restore="restore">Restore</button><button type="button" data-workspace-restore="fresh">Start Fresh</button><button type="button" data-workspace-restore="always">Always Restore</button><button type="button" data-workspace-restore="never">Never Restore</button></div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <form id="settings-form" class="nexcore-modal large-modal">
+      <header><h2 id="settings-title">NexCore Settings</h2><button type="button" data-settings-action="close" aria-label="Close settings">×</button></header>
+      <nav class="settings-categories" aria-label="Settings categories"><span class="active">General</span><span>Editor</span><span>Files</span><span>Terminal</span><span>Appearance</span><span>AI</span><span>Workspace</span><span>Git</span></nav>
+      <div class="settings-grid">
+        <label>Restore previous workspace<select id="setting-restore"><option value="never">Never</option><option value="ask">Ask</option><option value="always">Always</option></select></label>
+        <label>Autosave<select id="setting-autosave"><option value="off">Off</option><option value="delay">After Delay</option><option value="focus">On Focus Change</option><option value="window">On Window Change</option></select></label>
+        <label>Autosave delay<select id="setting-autosave-delay"><option value="500">500ms</option><option value="1000">1000ms</option><option value="2000">2000ms</option><option value="5000">5000ms</option></select></label>
+        <label>Editor font size<input id="setting-font-size" type="number" min="11" max="24"></label>
+        <label>Line height<input id="setting-line-height" type="number" min="1.2" max="2" step=".05"></label>
+        <label>Tab size<input id="setting-tab-size" type="number" min="2" max="8"></label>
+        <label><input id="setting-current-line" type="checkbox"> Current-line highlight</label>
+        <label><input id="setting-indent-guides" type="checkbox"> Indentation guides</label>
+        <label><input id="setting-git" type="checkbox"> Git indicators</label>
+        <label><input id="setting-reduced-motion" type="checkbox"> Reduced motion</label>
+        <label>AI service status <output id="setting-ai-status">Not configured</output></label>
+      </div>
+      <footer><button type="button" data-settings-action="import">Import</button><button type="button" data-settings-action="export">Export</button><button type="button" data-settings-action="reset">Reset Defaults</button><button type="submit" class="primary">Save Settings</button></footer>
+    </form>
+  </div>
+
+  <div id="shortcuts-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+    <div class="nexcore-modal large-modal">
+      <header><h2 id="shortcuts-title">Keyboard Shortcuts</h2><button type="button" data-shortcuts-action="close" aria-label="Close shortcuts">×</button></header>
+      <input id="shortcuts-filter" type="text" placeholder="Search shortcuts…" aria-label="Search keyboard shortcuts">
+      <div id="shortcuts-list" class="shortcuts-list"></div>
+    </div>
+  </div>
+
+  <div id="editor-context-menu" class="glass-menu editor-context-menu hidden" role="menu"></div>
+
+  <div id="ai-change-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="ai-change-title">
+    <div class="nexcore-modal large-modal">
+      <header><h2 id="ai-change-title">AI Change Preview</h2><button type="button" data-ai-change="reject" aria-label="Close preview">×</button></header>
+      <p id="ai-change-warning">Review proposed changes before applying.</p>
+      <pre id="ai-change-diff"></pre>
+      <div><button type="button" data-ai-change="apply" class="primary">Apply All</button><button type="button" data-ai-change="copy">Copy Proposed Code</button><button type="button" data-ai-change="save-as">Save as New File</button><button type="button" data-ai-change="reject">Reject</button></div>
+    </div>
+  </div>
+
+  <div id="file-warning-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="file-warning-title">
+    <div class="nexcore-modal">
+      <h2 id="file-warning-title">Large file</h2>
+      <p id="file-warning-message">This file may be slow to display.</p>
+      <div><button type="button" class="primary" data-file-warning="open">Open Anyway</button><button type="button" data-file-warning="cancel">Cancel</button></div>
+    </div>
+  </div>
+
+  <div id="external-change-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="external-change-title">
+    <div class="nexcore-modal">
+      <h2 id="external-change-title">This file has changed outside NexCore.</h2>
+      <p id="external-change-message"></p>
+      <div><button type="button" class="primary" data-external-change="reload">Reload</button><button type="button" data-external-change="keep">Keep Current Version</button><button type="button" data-external-change="save-as">Save As</button><button type="button" data-external-change="close">Close</button></div>
+    </div>
+  </div>
+
+  <div id="nexcore-toolbar-tooltip" class="nexcore-toolbar-tooltip hidden" role="tooltip"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"><span id="toast-mark" class="toast-mark"></span><div><strong id="toast-title"></strong><p id="toast-message"></p></div></div>
+  <script src="app.js"></script>
+</body>
+</html>

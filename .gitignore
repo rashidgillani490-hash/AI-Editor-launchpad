@@ -2,6 +2,8 @@ __pycache__/
 .claude/
 *.pyc
 .env
+.env.*
+!.env.example
 .venv/
 venv/
 *.pyo
@@ -14,6 +16,12 @@ Thumbs.db
 .agents/
 .codex/
 *.bak
+*.tmp
 *-preview.png
 temporary-*
 codex-*
+recovery/
+workspace-cache/
+diagnostics/
+screenshots/
+local-settings.json
